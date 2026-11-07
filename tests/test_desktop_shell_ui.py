@@ -35,6 +35,20 @@ class DesktopShellUiTests(DesktopHarness):
             with self.subTest(page=page):
                 self.run_desktop(lambda root, page=page: self.assert_page_fits(root, page), page=page)
 
+    def assert_sidebar_fits(self, root):
+        root.update()
+        radio = next(w for w in walk(root) if w.winfo_class() == "TLabel" and w.cget("text") == "RADIO").master
+        search = next(w for w in walk(root) if w.winfo_name() == "search")
+        for widget in [search] + [self.nav(root, name) for name in PAGES]:
+            with self.subTest(widget=str(widget)):
+                self.assertTrue(widget.winfo_ismapped())
+                self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(), radio.winfo_rooty())
+
+    def test_sidebar_fits_the_smallest_window_and_large_text(self):
+        self.run_desktop(self.assert_sidebar_fits, page="Overview", size="900x600")
+        self.write_shop({"text_size": "large"})
+        self.run_desktop(self.assert_sidebar_fits, page="Overview")
+
     def test_navigation_marks_the_current_page(self):
         def scenario(root):
             for page in PAGES:

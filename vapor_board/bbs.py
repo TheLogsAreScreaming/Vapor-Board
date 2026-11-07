@@ -198,6 +198,35 @@ class BulletinBoard:
             return db.execute("UPDATE mail SET read_at = CURRENT_TIMESTAMP WHERE recipient = ? AND sender = ? AND read_at IS NULL",
                               (user, other)).rowcount
 
+    def search(self, user, query, limit=50):
+        """Posts on any board, plus user's own messages (sent or received), containing query.
+
+        Case-insensitive plain-text match (no wildcards) on bodies, authors and names.
+        Results are newest first; each has kind "post" or "message". Other people's
+        private messages are never searched.
+        """
+        user = self._text(user, "user", 80)
+        query = self._text(query, "search", 100)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be 1–100")
+        pattern = "%" + query.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        like = "LIKE :pattern ESCAPE '\\'"
+        with self._connect() as db:
+            posts = [dict(row, kind="post") for row in db.execute(
+                f"""SELECT posts.id, posts.board_id, boards.name AS board_name, posts.author, posts.body, posts.created_at
+                    FROM posts JOIN boards ON boards.id = posts.board_id
+                    WHERE lower(posts.body) {like} OR lower(posts.author) {like}
+                    ORDER BY posts.created_at DESC, posts.id DESC LIMIT :limit""",
+                {"pattern": pattern, "limit": limit})]
+            messages = [dict(row, kind="message") for row in db.execute(
+                f"""SELECT id, sender, recipient, body, created_at, read_at FROM mail
+                    WHERE (sender = :user OR recipient = :user)
+                      AND (lower(body) {like} OR lower(CASE WHEN sender = :user THEN recipient ELSE sender END) {like})
+                    ORDER BY created_at DESC, id DESC LIMIT :limit""",
+                {"user": user, "pattern": pattern, "limit": limit})]
+        found = sorted(posts + messages, key=lambda r: (r["created_at"], r["kind"] == "message", r["id"]), reverse=True)
+        return found[:limit]
+
     def command(self, user, command):
         """Read-only commands only; writes require explicit application authorization."""
         user = self._text(user, "user", 80)

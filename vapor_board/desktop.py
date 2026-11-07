@@ -135,6 +135,14 @@ def main():
         "Customers": "Customer approvals and age verification.",
         "Settings": "How this copy of Vapor Board is set up.",
     }
+    # Search box under the shop name; results open on their own page (not in the sidebar list).
+    search_text = tk.StringVar()
+    search_box = ttk.Frame(sidebar, style="Sidebar.TFrame", padding=(t.px(LG), 0, t.px(LG), 0))
+    search_box.pack(fill="x")
+    search_entry = ttk.Entry(search_box, name="search", textvariable=search_text, width=10)
+    search_entry.pack(fill="x")
+    ttk.Label(search_box, text=f"Search posts and messages  ·  {key}F", style="Sidebar.Caption.TLabel").pack(anchor="w", pady=(t.px(XS), 0))
+
     # Pages are built in navigation order so each section label sits above its pages.
     page_parts = {}
     for section, entries in NAVIGATION:
@@ -1058,6 +1066,130 @@ def main():
         worker.stop()
         root.destroy()
 
+    # ==== Search ===========================================================================
+    # Not in the sidebar list: reached from the search box. Only the operator's own messages are searched.
+    search_page = ttk.Frame(page_host, padding=(t.px(28), t.px(24), t.px(28), t.px(LG)))
+    search_page.page_name = "Search"
+    search_page.grid(row=0, column=0, sticky="nsew")
+    pages["Search"] = search_page
+    search_header = ttk.Frame(search_page)
+    search_header.pack(fill="x", pady=(0, t.px(18)))
+    ttk.Label(search_header, text="Search", style="Title.TLabel").pack(anchor="w")
+    search_summary = tk.StringVar(value="Type in the search box and press Return.")
+    ttk.Label(search_header, textvariable=search_summary, style="Muted.TLabel", wraplength=t.px(520), justify="left").pack(anchor="w", pady=(2, 0))
+    search_body = ttk.Frame(search_page)
+    search_body.pack(fill="both", expand=True)
+    search_body.columnconfigure(1, weight=1)
+    search_body.rowconfigure(0, weight=1)
+    results_column = ttk.Frame(search_body, width=t.px(320))
+    results_column.grid(row=0, column=0, sticky="ns", padx=(0, t.px(LG)))
+    results_column.pack_propagate(False)
+    results_card = theme.Card(results_column, t, "Results").pack(fill="both", expand=True)
+    result_list = theme.ListView(results_card.body, t, height=8, placeholder="No search yet")
+    result_list.frame.pack(fill="both", expand=True)
+    preview_card = theme.Card(search_body, t, "Nothing selected", "Pick a result to preview it.").grid(row=0, column=1, sticky="nsew")
+    _holder, preview = theme.text_area(preview_card.body, t, height=5, readonly=True)
+    _holder.pack(fill="both", expand=True)
+    preview.tag_configure("match", background=p.selection)
+    found = []
+
+    def describe(result):
+        if result["kind"] == "post":
+            return f'▤  {result["board_name"]}  ·  {result["author"]} — {first_line(result["body"], 26)}'
+        outgoing = result["sender"] == mailbox
+        return f'✉  {"To " + result["recipient"] if outgoing else result["sender"]} — {first_line(result["body"], 26)}'
+
+    def show_preview(index=None):
+        preview.configure(state="normal")
+        preview.delete("1.0", "end")
+        if index is None or index >= len(found):
+            preview_card.title_var.set("Nothing selected")
+            preview_card.subtitle_var.set("Pick a result to preview it.")
+            preview.insert("1.0", "Results show posts on every board and your own messages.", "placeholder")
+            open_button.state(["disabled"])
+        else:
+            result = found[index]
+            if result["kind"] == "post":
+                preview_card.title_var.set(f'Post in {result["board_name"]}')
+                preview_card.subtitle_var.set(f'By {result["author"]}  ·  {friendly_time(result["created_at"])}')
+            else:
+                outgoing = result["sender"] == mailbox
+                preview_card.title_var.set(f'Message {"to " + result["recipient"] if outgoing else "from " + result["sender"]}')
+                preview_card.subtitle_var.set(("Sent " if outgoing else "Received ") + friendly_time(result["created_at"]))
+            preview.insert("1.0", result["body"])
+            term = search_text.get().strip()
+            if term:
+                start = "1.0"
+                while True:
+                    start = preview.search(term, start, stopindex="end", nocase=True)
+                    if not start:
+                        break
+                    end = f"{start}+{len(term)}c"
+                    preview.tag_add("match", start, end)
+                    start = end
+            open_button.state(["!disabled"])
+        preview.configure(state="disabled")
+
+    def run_search(_event=None):
+        nonlocal found
+        term = search_text.get().strip()
+        if not term:
+            search_entry.focus_set()
+            return "break"
+        error = None
+        if not database.exists():
+            found = []
+        else:
+            try:
+                found = BulletinBoard(database).search(mailbox, term)
+            except DATA_ERRORS as exc:
+                found, error = [], f"Couldn't search: {exc}"
+        result_list.set_rows([(describe(result), ()) for result in found],
+                             placeholder=error or "No matches", tag="error" if error else "placeholder")
+        posts_found = sum(1 for result in found if result["kind"] == "post")
+        search_summary.set(f"{plural(len(found), 'result')} for “{term}”" +
+                           (f"  ·  {plural(posts_found, 'post')}, {plural(len(found) - posts_found, 'message')}" if found else ""))
+        results_card.title_var.set("Results" if found else "No matches")
+        show_page("Search")
+        show_preview()
+        return "break"
+
+    def open_result(_event=None):
+        index = result_list.selected()
+        if index is None or index >= len(found):
+            return "break"
+        result = found[index]
+        if result["kind"] == "post":
+            show_page("Boards")
+            refresh_boards(keep=result["board_id"])
+            show_posts(keep=result["id"])
+        else:
+            other = result["recipient"] if result["sender"] == mailbox else result["sender"]
+            show_page("Messages")
+            switch_mail_view("threads")
+            row = next((i for i, entry in enumerate(shown_mail) if entry["other"] == other), None)
+            if row is not None:
+                mail_list.select(row)
+                open_thread(row)
+        return "break"
+
+    open_button = ttk.Button(preview_card.actions, text="Open", style="Accent.TButton", command=open_result)
+    open_button.pack()
+    result_list.on_select = show_preview
+    result_list.tree.bind("<Return>", open_result)
+    result_list.tree.bind("<Double-1>", open_result)
+    search_entry.bind("<Return>", run_search)
+    search_entry.submit = run_search  # what Return does; tests call it since synthetic keys need window focus
+    search_entry.bind("<Escape>", lambda _e: (search_text.set(""), "break")[1])
+    search_entry.bind("<Down>", lambda _e: (result_list.tree.focus_set(), "break")[1] if found and current[0] == "Search" else None)
+
+    def focus_search(_event=None):
+        search_entry.focus_set()
+        search_entry.select_range(0, "end")
+        return "break"
+
+    show_preview()
+
     # ---- status bar, keyboard, start-up ---------------------------------------------------
     root.protocol("WM_DELETE_WINDOW", on_close)
     status_bar = tk.Frame(main_area, bg=p.background)
@@ -1074,7 +1206,8 @@ def main():
     for number, name in enumerate(order, start=1):
         root.bind_all(f"<{mod}-Key-{number}>", lambda _e, name=name: show_page(name))
     root.bind_all(f"<{mod}-n>", lambda _e: new_message() if current[0] == "Messages" else new_post())
-    root.bind_all(f"<{mod}-r>", lambda _e: {"Boards": refresh_boards, "Messages": refresh_mail}.get(current[0], refresh_overview)())
+    root.bind_all(f"<{mod}-r>", lambda _e: {"Boards": refresh_boards, "Messages": refresh_mail, "Search": run_search}.get(current[0], refresh_overview)())
+    root.bind_all(f"<{mod}-f>", focus_search)
     root.bind_all("<Escape>", lambda _e: toast.hide(), add="+")
 
     unread_count.trace_add("write", lambda *_: unread_note.set(
