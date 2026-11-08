@@ -4,7 +4,7 @@ from desktop_harness import DesktopHarness, walk
 from vapor_board import desktop, ui_theme
 from vapor_board.bbs import BulletinBoard
 
-PAGES = ("Overview", "Boards", "Messages", "Customers", "Settings")
+PAGES = ("Overview", "Boards", "Messages", "Customers", "Staff", "Settings")
 
 
 class DesktopShellUiTests(DesktopHarness):

@@ -6,6 +6,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 from vapor_board import desktop
+from vapor_board.accounts import StaffDirectory
+
+OWNER, OWNER_PASSWORD = "owner", "correct horse"
 
 
 def walk(widget):
@@ -26,6 +29,11 @@ class DesktopHarness(unittest.TestCase):
         self.home = Path(self.directory.name)
         (self.home / ".vapor-board").mkdir()
         self.database = self.home / ".vapor-board" / "bbs.sqlite"
+        self.staff_path = self.home / ".vapor-board" / "staff.sqlite"
+        # Signed in as the owner by default; display name "Operator" matches the default mailbox.
+        self.staff = StaffDirectory(self.staff_path)
+        self.staff.create(OWNER, "Operator", OWNER_PASSWORD, iterations=1000)
+        self.sign_in_as = (OWNER, OWNER_PASSWORD)
 
     def write_shop(self, settings):
         (self.home / ".vapor-board" / "shop.json").write_text(
@@ -36,6 +44,8 @@ class DesktopHarness(unittest.TestCase):
             try:
                 root.attributes("-alpha", 0.0)  # invisible: nothing flashes on the operator's screen
                 root.geometry(f"{size}+4000+4000" if size else "+4000+4000")
+                if self.sign_in_as:
+                    self.sign_in(root, *self.sign_in_as)
                 self.nav(root, page).invoke()  # open the page from the sidebar, as the operator would
                 root.update()  # map it so selection bindings fire
                 scenario(root)
@@ -51,6 +61,27 @@ class DesktopHarness(unittest.TestCase):
                                     showinfo=unexpected, askyesno=unexpected), \
                 mock.patch.object(desktop.filedialog, "askopenfilename", unexpected):
             desktop.main()
+
+    # ---- signing in ----------------------------------------------------------------------
+    @staticmethod
+    def gate(root):
+        """The sign-in screen, or None once someone has signed in."""
+        frame = next(w for w in walk(root) if w.winfo_name() == "gate")
+        return frame if frame.winfo_manager() else None
+
+    @staticmethod
+    def gate_entry(root, name):
+        return next(w for w in walk(root) if w.winfo_name() == f"gate_{name}")
+
+    def sign_in(self, root, username, password):
+        gate = self.gate(root)
+        self.assertIsNotNone(gate, "sign-in screen not showing")
+        for name, value in (("username", username), ("password", password)):
+            entry = self.gate_entry(root, name)
+            entry.delete(0, "end")
+            entry.insert(0, value)
+        next(w for w in walk(gate) if w.winfo_class() == "TButton" and w.cget("text") == "Sign in").invoke()
+        root.update()
 
     # ---- finding things -----------------------------------------------------------------
     @staticmethod
