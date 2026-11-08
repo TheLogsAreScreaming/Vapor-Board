@@ -9,3 +9,6 @@ These tests assert existing guardrails: customer access requires both approval a
 - The desktop now requires a staff sign-in (docs/STAFF_SIGN_IN.md). Customer records and approvals are kept by signed-in staff only (docs/CUSTOMERS.md).
 - `ReceiveOnlyTcpClient.send` still always refuses. The radio link (`MeshtasticTcpClient`) sends only API control messages (want_config, heartbeat) unless `transmissions_enabled` is true, and then only direct text replies to approved customers (docs/RADIO_REPLIES.md).
 - A radio node ID is not proof of identity: anyone who copies a customer's node ID could read the customer-visible boards and that customer's staff replies. Keep sensitive information off customer-visible boards and out of replies.
+
+## Update check
+Off by default. With `check_for_updates` true, or when someone chooses File ▸ Check for Updates, Vapor Board asks GitHub for the public release list. No shop data is sent, and nothing is downloaded or installed.

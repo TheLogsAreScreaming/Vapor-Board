@@ -1,4 +1,5 @@
 """Navigation, Overview, radio controls, Settings and layout of the real Tk window."""
+import time
 from unittest import mock
 from desktop_harness import DesktopHarness, walk
 from vapor_board import desktop, ui_theme
@@ -219,6 +220,23 @@ class DesktopShellUiTests(DesktopHarness):
             self.assertTrue(self.toast(root).startswith("No USB radio found"))
 
         self.run_desktop(scenario, page="Overview")
+
+    def test_update_check_stays_off_unless_turned_on(self):
+        with mock.patch.object(desktop.updates, "check") as check:
+            self.run_desktop(lambda root: root.update(), page="Overview")
+        check.assert_not_called()
+
+    def test_update_check_reports_a_newer_release(self):
+        self.write_shop({"check_for_updates": True})
+
+        def scenario(root):
+            for _ in range(8):
+                time.sleep(0.1)
+                root.update()
+            self.assertEqual(self.toast(root), "Update available: v9.0.0 is on the Vapor-Board-Releases page.")
+
+        with mock.patch.object(desktop.updates, "check", return_value="v9.0.0"):
+            self.run_desktop(scenario, page="Overview")
 
     def test_settings_show_safety_defaults(self):
         def scenario(root):

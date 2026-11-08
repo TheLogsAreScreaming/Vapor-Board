@@ -58,6 +58,13 @@ class ShopConfigTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     ShopConfig(**kwargs)
 
+    def test_update_check_is_off_by_default_and_profile_is_limited(self):
+        self.assertFalse(ShopConfig().check_for_updates)
+        for kwargs in ({"check_for_updates": 1}, {"shop_hours": "x" * 161}, {"shop_contact": 5}):
+            with self.subTest(kwargs):
+                with self.assertRaises(ValueError):
+                    ShopConfig(**kwargs)
+
     def test_older_settings_files_still_load(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "shop.json"

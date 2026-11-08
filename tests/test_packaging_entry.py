@@ -9,10 +9,9 @@ class PackagingTests(unittest.TestCase):
         source = (ROOT / "packaging" / "desktop_entry.py").read_text()
         tree = ast.parse(source)
         self.assertTrue(any(isinstance(node, ast.ImportFrom) and node.module == "vapor_board.desktop" for node in ast.walk(tree)))
-    def test_build_targets_intel(self):
-        source = (ROOT / "packaging" / "build_macos_intel.sh").read_text()
-        self.assertIn('x86_64', source)
-        self.assertIn('packaging/desktop_entry.py', source)
-        self.assertIn('Vapor-Board-Intel.dmg', source)
+    def test_build_covers_both_mac_architectures(self):
+        source = (ROOT / "packaging" / "build_macos.sh").read_text()
+        for expected in ('x86_64', 'arm64', 'packaging/desktop_entry.py', 'Vapor-Board-$LABEL.dmg', 'codesign --force --deep --sign -'):
+            self.assertIn(expected, source)
 
 if __name__ == "__main__": unittest.main()

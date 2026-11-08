@@ -73,6 +73,6 @@ See [CHANGELOG.md](CHANGELOG.md) and [docs/MIGRATION_ROADMAP.md](docs/MIGRATION_
 ## Development
 ```sh
 python3 -m unittest discover -s tests -v      # window tests skip without a display
-sh packaging/build_macos_intel.sh              # Intel Mac only: builds dist/Vapor Board.app and the DMG
+sh packaging/build_macos.sh                    # builds dist/Vapor Board.app and the DMG for this Mac's chip
 ```
 Vapor Board is a separate project inspired by the engineering of [THE SITDOWN BBS](https://github.com/TheLogsAreScreaming/The-Sitdown-BBS), which remains independent.
