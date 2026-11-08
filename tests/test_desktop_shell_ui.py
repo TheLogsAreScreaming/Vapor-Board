@@ -178,6 +178,24 @@ class DesktopShellUiTests(DesktopHarness):
 
         self.run_desktop(scenario, page="Settings")
 
+    def test_settings_tabs_show_one_group_and_fit_the_smallest_window(self):
+        self.write_shop({"text_size": "larger"})
+
+        def scenario(root):
+            page = self.page(root, "Settings")
+            shown = lambda: [w.cget("text") for w in walk(page) if w.winfo_class() == "TLabel" and w.winfo_ismapped()]
+            root.update()
+            self.assertIn("Shop name", shown())
+            self.assertNotIn("Radio transmit", shown())
+            self.assert_page_fits(root, "Settings")
+            self.buttons(root, "Settings")["Radio"].invoke()
+            root.update()
+            self.assertIn("Radio transmit", shown())
+            self.assertNotIn("Shop name", shown())
+            self.assert_page_fits(root, "Settings")
+
+        self.run_desktop(scenario, page="Settings", size="900x600")
+
     def test_settings_show_safety_defaults(self):
         def scenario(root):
             text = self.labels(self.page(root, "Settings"))

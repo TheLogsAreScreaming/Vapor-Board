@@ -1,4 +1,5 @@
 """Customer kiosk in the real Tk window; skipped without a display."""
+import tkinter as tk
 from desktop_harness import DesktopHarness, walk, OWNER, OWNER_PASSWORD
 from vapor_board.bbs import BulletinBoard
 
@@ -60,6 +61,39 @@ class DesktopKioskUiTests(DesktopHarness):
         self.run_desktop(scenario, page="Overview")
         actions = [entry["action"] for entry in self.staff.activity()]
         self.assertEqual(actions[:3], ["kiosk stopped", "signed in", "kiosk started"])
+
+    def start(self, root):
+        self.buttons(root, "Overview")["Start kiosk"].invoke()
+        root.update()
+
+    def test_kiosk_shows_tagline_and_a_scaled_logo(self):
+        BulletinBoard(self.database).create_board("Hours")
+        self.write_shop({"kiosk_fullscreen": False, "kiosk_logo": "logo.png", "kiosk_tagline": "Open late on Fridays"})
+
+        def scenario(root):
+            image = tk.PhotoImage(master=root, width=600, height=300)
+            image.write(str(self.database.parent / "logo.png"), format="png")
+            root.update()
+
+        self.run_desktop(scenario, page="Overview")
+
+        def branded(root):
+            self.start(root)
+            self.assertIn("Open late on Fridays", self.labels(self.kiosk(root)))
+            logo = next(w for w in walk(self.kiosk(root)) if w.winfo_name() == "kiosk_logo")
+            self.assertLessEqual(logo.winfo_reqheight(), 100)
+
+        self.run_desktop(branded, page="Overview")
+
+    def test_missing_logo_falls_back_to_the_monogram(self):
+        BulletinBoard(self.database).create_board("Hours")
+        self.write_shop({"kiosk_fullscreen": False, "kiosk_logo": "nope.png"})
+
+        def scenario(root):
+            self.start(root)
+            self.assertFalse([w for w in walk(self.kiosk(root)) if w.winfo_name() == "kiosk_logo"])
+
+        self.run_desktop(scenario, page="Overview")
 
     def test_kiosk_needs_a_visible_board(self):
         board = BulletinBoard(self.database).create_board("Staff notes")

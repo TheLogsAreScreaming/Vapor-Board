@@ -21,6 +21,7 @@ from .ui_format import friendly_time, radio_presentation, first_line, plural, pa
 from . import ui_theme as theme
 from .ui_theme import XS, SM, MD, LG, XL
 from tkinter import messagebox, filedialog
+from . import alerts
 from . import backup as backups
 from .export import export_csv
 from . import demo as demo_mode
@@ -1141,17 +1142,30 @@ def main(argv=None):
     on_show["Staff"] = show_staff
 
     # ==== Settings =========================================================================
+    # One tab at a time, so every card keeps its room at the smallest window and largest text size.
+    settings_tabs = ttk.Frame(settings_page)
+    settings_tabs.pack(fill="x", pady=(0, t.px(MD)))
+    ttk.Label(settings_page, text="To change a setting, edit shop.json and restart Vapor Board.",
+              style="Caption.TLabel", wraplength=t.px(520), justify="left").pack(side="bottom", anchor="w", pady=(t.px(MD), 0))
     settings_body = ttk.Frame(settings_page)
     settings_body.pack(fill="both", expand=True)
-    settings_body.columnconfigure(0, weight=1, uniform="settings")
-    settings_body.columnconfigure(1, weight=1, uniform="settings")
-    left_settings = ttk.Frame(settings_body)
-    left_settings.grid(row=0, column=0, sticky="nsew", padx=(0, t.px(8)))
-    right_settings = ttk.Frame(settings_body)
-    right_settings.grid(row=0, column=1, sticky="nsew", padx=(t.px(8), 0))
+    settings_body.columnconfigure(0, weight=1)
+    settings_panes, settings_tab_buttons = {}, {}
+
+    def show_settings_tab(name):
+        for key, pane in settings_panes.items():
+            pane.grid() if key == name else pane.grid_remove()
+            settings_tab_buttons[key].configure(style="SegmentActive.TButton" if key == name else "Segment.TButton")
+
+    for key, label in (("shop", "Shop"), ("storage", "Storage"), ("radio", "Radio"), ("customers", "Customer access")):
+        settings_panes[key] = ttk.Frame(settings_body)
+        settings_panes[key].grid(row=0, column=0, sticky="nsew")
+        settings_tab_buttons[key] = ttk.Button(settings_tabs, text=label, style="Segment.TButton", command=lambda k=key: show_settings_tab(k))
+        settings_tab_buttons[key].pack(side="left", padx=(0, t.px(XS)))
+    show_settings_tab("radio" if config_error else "shop")  # a settings problem is reported on the radio tab
 
     if config_error:
-        problem = theme.Card(right_settings, t, "Settings file couldn't be read",
+        problem = theme.Card(settings_panes["radio"], t, "Settings file couldn't be read",
                              f"{config_error}. Vapor Board is using its default settings until shop.json is fixed.").pack(fill="x", pady=(0, t.px(LG)))
         problem.outer.configure(highlightbackground=p.warning)
         problem.subtitle.configure(wraplength=t.px(320))
@@ -1189,7 +1203,7 @@ def main(argv=None):
 
     appearance = {"system": f"Match macOS ({theme.resolve_appearance('system').title()})", "light": "Light", "dark": "Dark"}[config.appearance]
     readable_accent = p.accent_text
-    settings_card(left_settings, "Shop", (
+    settings_card(settings_panes["shop"], "Shop", (
         ("Shop name", config.shop_name, None),
         ("Operator mailbox", mailbox, "The name this Mac reads and sends private messages as."),
         ("Accent colour", ("swatch", config.accent_color.upper()), None),
@@ -1207,11 +1221,10 @@ def main(argv=None):
         last_backup.set(f"{short_path(database)}  ·  Last backup: {when}")
         backup_now.state(["!disabled"] if database.exists() else ["disabled"])
 
-    # Backup buttons live in the page header: the left column has no spare height at 900x600.
-    settings_card(left_settings, "Storage", (
+    settings_card(settings_panes["storage"], "Storage", (
         ("Settings file", "Found" if config_path.exists() else "Not created (defaults)", short_path(config_path)),
         ("Database", database_state, last_backup),
-    ), pady=(t.px(LG), 0))
+    ))
 
     def back_up_now():
         try:
@@ -1268,20 +1281,19 @@ def main(argv=None):
     backup_now.pack(side="left")
     ttk.Button(settings_actions, text="Restore…", command=restore_from_backup).pack(side="left", padx=(t.px(SM), 0))
     refresh_storage()
-    settings_card(right_settings, "Radio & network", (
+    settings_card(settings_panes["radio"], "Radio & network", (
         ("Radio transmit", ("warning", "On") if transmit else ("neutral", "Off"),
          "Replies only to direct messages from approved customers, with rate limits. Never broadcasts." if transmit
          else "Vapor Board only listens. Set transmissions_enabled in shop.json to reply to approved customers."),
         ("MQTT bridge", ("success", "On") if config.mqtt_enabled else ("neutral", "Off"),
          "No internet bridge. Nothing leaves your local network."),
     ))
-    settings_card(right_settings, "Customer access", (
+    settings_card(settings_panes["customers"], "Customer access", (
         ("Approval before joining", ("success", "Required") if config.customer_access_requires_approval else ("warning", "Not required"), None),
         ("Minimum age", f"{config.minimum_customer_age}+", None),
         ("Staff auto-lock", f"After {plural(config.auto_lock_minutes, 'minute')}" if config.auto_lock_minutes else "Off", None),
-    ), pady=(t.px(LG), 0))
-    ttk.Label(right_settings, text="To change a setting, edit shop.json and restart Vapor Board.",
-              style="Caption.TLabel", wraplength=t.px(330), justify="left").pack(anchor="w", pady=(t.px(MD), 0))
+        ("New-message alerts", ("success", "On") if config.message_alerts else ("neutral", "Off"), None),
+    ))
 
     def reveal_settings():
         target = config_path if config_path.exists() else config_path.parent
@@ -1484,6 +1496,17 @@ def main(argv=None):
             pulse_job[0] = root.after(650, pulse, False)
 
     replies = RadioReplies(database, config.shop_name, mailbox)
+    alert_gate = alerts.AlertGate()
+
+    def alert_new_message(customer):
+        """Tell staff a customer wrote in. The name stays off the kiosk and out of the Mac banner."""
+        if not config.message_alerts:
+            return
+        if session[0] is not None:
+            notify("info", "New customer message", f"From {customer}. Open Messages to reply.")
+        if alert_gate.ready():
+            root.bell()
+            alerts.show_banner(config.shop_name, "New customer message")
 
     def answer_radio(message):
         """Route a decoded packet: learn our node number, and answer approved customers when transmit is on."""
@@ -1502,6 +1525,7 @@ def main(argv=None):
                     pass
             if outcome.replies and "message to the shop" in outcome.note:
                 refresh_mail()
+                alert_new_message(outcome.customer)
 
     def poll_radio():
         if not root.winfo_exists():
@@ -1862,14 +1886,33 @@ def main(argv=None):
     kiosk = ttk.Frame(root, name="kiosk", padding=(t.px(36), t.px(28)))
     kiosk_on = [False]
     kiosk_boards, kiosk_job = [], [None]
-    kiosk_head = ttk.Frame(kiosk)
+    kiosk_head = tk.Frame(kiosk, bg=p.accent_fill, padx=t.px(LG), pady=t.px(MD))
     kiosk_head.pack(fill="x", pady=(0, t.px(LG)))
-    tk.Label(kiosk_head, text=config.shop_name.strip()[:1].upper(), bg=p.accent_fill, fg=p.on_accent,
-             font=t.fonts["monogram"], width=2, pady=t.px(4)).pack(side="left", anchor="n")
-    kiosk_names = ttk.Frame(kiosk_head)
+
+    def load_kiosk_logo():
+        """The shop's logo scaled to fit the header, or None (no logo set, or the file can't be read)."""
+        if not config.kiosk_logo.strip():
+            return None
+        path = Path(config.kiosk_logo.strip()).expanduser()
+        try:
+            image = tk.PhotoImage(master=root, file=str(path if path.is_absolute() else database.parent / path))
+        except tk.TclError:
+            return None
+        most = t.px(72)
+        factor = max(1, -(-image.height() // most), -(-image.width() // (most * 4)))
+        return image.subsample(factor) if factor > 1 else image
+
+    kiosk_logo = load_kiosk_logo()  # also keeps the image alive; Tk doesn't hold a reference
+    if kiosk_logo is not None:
+        tk.Label(kiosk_head, name="kiosk_logo", image=kiosk_logo, bg=p.accent_fill, borderwidth=0).pack(side="left", anchor="center")
+    else:
+        tk.Label(kiosk_head, text=config.shop_name.strip()[:1].upper(), bg=p.on_accent, fg=p.accent_fill,
+                 font=t.fonts["monogram"], width=2, pady=t.px(4)).pack(side="left", anchor="center")
+    kiosk_names = tk.Frame(kiosk_head, bg=p.accent_fill)
     kiosk_names.pack(side="left", fill="x", expand=True, padx=(t.px(MD), 0))
-    ttk.Label(kiosk_names, text=config.shop_name, style="Title.TLabel").pack(anchor="w")
-    ttk.Label(kiosk_names, text="Shop notices  ·  Touch a board to read it", style="Muted.TLabel").pack(anchor="w")
+    tk.Label(kiosk_names, text=config.shop_name, bg=p.accent_fill, fg=p.on_accent, font=t.fonts["title"]).pack(anchor="w")
+    tk.Label(kiosk_names, text=config.kiosk_tagline.strip() or "Shop notices  ·  Touch a board to read it", bg=p.accent_fill, fg=p.on_accent,
+             font=t.fonts["body"], wraplength=t.px(620), justify="left").pack(anchor="w")
     kiosk_staff = ttk.Button(kiosk_head, text="Staff sign-in", command=lambda: open_gate())
     kiosk_staff.pack(side="right", anchor="n")
     kiosk_body = ttk.Frame(kiosk)
@@ -1883,7 +1926,7 @@ def main(argv=None):
     kiosk_read_card = theme.Card(kiosk_body, t, "").grid(row=0, column=1, sticky="nsew")
     _holder, kiosk_text = theme.text_area(kiosk_read_card.body, t, height=6, readonly=True)
     _holder.pack(fill="both", expand=True)
-    reading_font = (t.fonts["body"][0], t.fonts["headline"][1])
+    reading_font = (t.fonts["body"][0], round(t.fonts["headline"][1] * {"standard": 1.0, "large": 1.3, "larger": 1.6}[config.kiosk_text_size]))
     kiosk_text.configure(font=reading_font, padx=t.px(LG), pady=t.px(LG))
     kiosk_text.tag_configure("meta", foreground=p.muted, font=t.fonts["small"])
     kiosk_text.tag_configure("pinned", foreground=p.accent_text, font=t.fonts["body_bold"])
