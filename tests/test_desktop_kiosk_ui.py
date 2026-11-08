@@ -85,6 +85,16 @@ class DesktopKioskUiTests(DesktopHarness):
 
         self.run_desktop(branded, page="Overview")
 
+    def test_kiosk_shows_hours_and_contact(self):
+        BulletinBoard(self.database).create_board("Hours")
+        self.write_shop({"kiosk_fullscreen": False, "shop_hours": "10-8 daily", "shop_contact": "555-0100"})
+
+        def scenario(root):
+            self.start(root)
+            self.assertIn("10-8 daily   ·   555-0100", self.labels(self.kiosk(root)))
+
+        self.run_desktop(scenario, page="Overview")
+
     def test_missing_logo_falls_back_to_the_monogram(self):
         BulletinBoard(self.database).create_board("Hours")
         self.write_shop({"kiosk_fullscreen": False, "kiosk_logo": "nope.png"})

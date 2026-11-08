@@ -56,6 +56,11 @@ class RadioRepliesTests(unittest.TestCase):
         self.assertEqual(self.ask("more").replies[0], "Store hours: note 1 | Open 10-8 today")
         self.assertEqual(self.ask("more").replies[0], "Send read and a board number first.")
 
+    def test_info_sends_only_what_is_set(self):
+        self.assertEqual(self.ask("info").replies[0], "Corner Shop. No shop details set.")
+        self.router.hours, self.router.contact = "10-8 daily", ""
+        self.assertEqual(self.ask("info").replies[0], "Corner Shop. Hours: 10-8 daily")
+
     def test_more_stops_when_the_board_is_hidden(self):
         for number in range(1, 6):
             self.bbs.post(self.hours, "Op", f"note {number}")

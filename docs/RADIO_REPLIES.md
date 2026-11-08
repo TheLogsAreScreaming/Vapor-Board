@@ -11,6 +11,7 @@ Set `"transmissions_enabled": true` in `~/.vapor-board/shop.json` and restart. S
 | `help` | The command list |
 | `boards` | Numbered list of boards marked Visible |
 | `read 2` | Up to three current posts from board 2 (scheduled/expired posts left out) |
+| `info` | The shop's hours and contact details, if set |
 | `more` | The next three older posts of the board being read |
 | `msg Do you have size 10?` | Stores the message in the shop's Messages inbox from the customer's name |
 | `inbox` | Up to three unread staff replies to that customer, then marks them read |

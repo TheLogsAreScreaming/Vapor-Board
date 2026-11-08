@@ -2,7 +2,9 @@
 
 Screens are drawn only with the components in ui_theme; wording comes from ui_format.
 """
+import queue
 import sqlite3
+import threading
 from datetime import timezone
 import subprocess
 import sys
@@ -22,6 +24,7 @@ from . import ui_theme as theme
 from .ui_theme import XS, SM, MD, LG, XL
 from tkinter import messagebox, filedialog
 from . import alerts
+from . import updates
 from . import backup as backups
 from .export import export_csv
 from . import demo as demo_mode
@@ -1205,6 +1208,8 @@ def main(argv=None):
     readable_accent = p.accent_text
     settings_card(settings_panes["shop"], "Shop", (
         ("Shop name", config.shop_name, None),
+        ("Hours", config.shop_hours or "Not set", None),
+        ("Contact", config.shop_contact or "Not set", None),
         ("Operator mailbox", mailbox, "The name this Mac reads and sends private messages as."),
         ("Accent colour", ("swatch", config.accent_color.upper()), None),
         ("Appearance", appearance, None),
@@ -1224,6 +1229,9 @@ def main(argv=None):
     settings_card(settings_panes["storage"], "Storage", (
         ("Settings file", "Found" if config_path.exists() else "Not created (defaults)", short_path(config_path)),
         ("Database", database_state, last_backup),
+        ("Update check", ("success", "On") if config.check_for_updates else ("neutral", "Off"),
+         "Asks GitHub for newer releases at launch. Sends no shop data." if config.check_for_updates
+         else "Vapor Board doesn't contact the internet. Set check_for_updates in shop.json, or use File ▸ Check for Updates."),
     ))
 
     def back_up_now():
@@ -1495,7 +1503,7 @@ def main(argv=None):
         if display_state[0].tcp == ConnectionState.CONNECTING and not t.reduce_motion and pulse_job[0] is None:
             pulse_job[0] = root.after(650, pulse, False)
 
-    replies = RadioReplies(database, config.shop_name, mailbox)
+    replies = RadioReplies(database, config.shop_name, mailbox, hours=config.shop_hours, contact=config.shop_contact)
     alert_gate = alerts.AlertGate()
 
     def alert_new_message(customer):
@@ -1915,6 +1923,9 @@ def main(argv=None):
              font=t.fonts["body"], wraplength=t.px(620), justify="left").pack(anchor="w")
     kiosk_staff = ttk.Button(kiosk_head, text="Staff sign-in", command=lambda: open_gate())
     kiosk_staff.pack(side="right", anchor="n")
+    kiosk_details = "   ·   ".join(part.strip() for part in (config.shop_hours, config.shop_contact) if part.strip())
+    if kiosk_details:
+        ttk.Label(kiosk, name="kiosk_info", text=kiosk_details, style="Muted.TLabel", wraplength=t.px(760), justify="center").pack(side="bottom", pady=(t.px(MD), 0))
     kiosk_body = ttk.Frame(kiosk)
     kiosk_body.pack(fill="both", expand=True)
     kiosk_body.columnconfigure(1, weight=1)
@@ -2067,10 +2078,38 @@ def main(argv=None):
     def when_signed_in(command):
         return lambda: command() if session[0] is not None else None
 
+    def report_update(tag, problem, asked):
+        if tag:
+            notify("info", "Update available", f"{tag} is on the Vapor-Board-Releases page.")
+        elif asked:
+            notify("danger", "Update check failed", problem) if problem else notify("success", "You're up to date", f"This is {VERSION_LABEL}.")
+
+    def check_updates(asked=False):
+        """Runs off the main thread; a failure at launch is silent, a failure when asked is reported."""
+        results = queue.Queue()
+
+        def work():
+            try:
+                results.put((updates.check(), ""))
+            except (OSError, ValueError) as exc:
+                results.put((None, str(exc)))
+
+        def collect():
+            try:
+                tag, problem = results.get_nowait()
+            except queue.Empty:
+                root.after(300, collect)
+                return
+            report_update(tag, problem, asked)
+
+        threading.Thread(target=work, daemon=True).start()
+        root.after(300, collect)
+
     menubar = tk.Menu(root, name="menubar")
     file_menu = tk.Menu(menubar, name="file", tearoff=0)
     for label, command, accelerator in (("Back Up Now", back_up_now, None), ("Restore From Backup…", restore_from_backup, None),
                                         (None, None, None), ("Export as Spreadsheets (CSV)", export_now, None),
+                                        (None, None, None), ("Check for Updates…", lambda: check_updates(asked=True), None),
                                         (None, None, None), ("Start Kiosk", start_kiosk, None), ("Lock", lock, f"{key}L")):
         if label is None:
             file_menu.add_separator()
@@ -2103,6 +2142,8 @@ def main(argv=None):
     else:
         open_gate()
     root.after(100, poll_radio)
+    if config.check_for_updates and not demo:
+        check_updates()
     root.mainloop()
 
 
