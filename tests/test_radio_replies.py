@@ -47,6 +47,22 @@ class RadioRepliesTests(unittest.TestCase):
         self.router.handle({"variant": "my_info", "node_num": ME})
         self.ids = iter(range(100, 10_000))
 
+    def test_more_pages_through_older_posts(self):
+        for number in range(1, 8):
+            self.bbs.post(self.hours, "Op", f"note {number}")
+        first = self.ask("read 1").replies[0]
+        self.assertEqual(first, "Store hours (send more for older): note 7 | note 6 | note 5")
+        self.assertEqual(self.ask("more").replies[0], "Store hours (send more for older): note 4 | note 3 | note 2")
+        self.assertEqual(self.ask("more").replies[0], "Store hours: note 1 | Open 10-8 today")
+        self.assertEqual(self.ask("more").replies[0], "Send read and a board number first.")
+
+    def test_more_stops_when_the_board_is_hidden(self):
+        for number in range(1, 6):
+            self.bbs.post(self.hours, "Op", f"note {number}")
+        self.ask("read 1")
+        self.bbs.set_customer_visible(self.hours, False)
+        self.assertEqual(self.ask("more").replies[0], "Send read and a board number first.")
+
     def ask(self, text, **extra):
         return self.router.handle(dm(text, packet_id=next(self.ids), **extra))
 

@@ -15,7 +15,8 @@ from .bbs import BulletinBoard
 from .customers import CustomerBook
 from .meshwire import TEXT_MESSAGE_APP, BROADCAST, node_id, split_text
 
-HELP = "Commands: boards · read N · msg <your message> · inbox · help"
+HELP = "Commands: boards · read N · more · msg <your message> · inbox · help"
+PAGE = 3  # posts per reply
 
 
 @dataclass
@@ -36,6 +37,7 @@ class RadioReplies:
         self.my_node = None
         self._seen = deque(maxlen=256)
         self._sent = deque()  # (time, node) of recent replies
+        self._reading = {}  # customer id -> (board id, posts already sent); in memory only
 
     def _allowed(self, node):
         now = self.clock()
@@ -91,11 +93,13 @@ class RadioReplies:
                 board = boards[int(rest.strip()) - 1]
             except (ValueError, IndexError):
                 return f"Send read and a board number from 1 to {len(boards)}." if boards else "No boards to read right now.", "read: bad board number"
-            posts = bbs.customer_posts(board["id"], limit=3)
-            if not posts:
-                return f"{board['name']}: nothing posted.", f"read {board['name']}"
-            body = " | ".join(" ".join(p["body"].split()) for p in posts)
-            return f"{board['name']}: {body}", f"read {board['name']}"
+            return self._page(customer, bbs, board, 0)
+        if command == "more":
+            board_id, offset = self._reading.get(customer.id, (None, 0))
+            board = next((b for b in bbs.customer_boards() if b["id"] == board_id), None)  # it may have been hidden since
+            if board is None:
+                return "Send read and a board number first.", "more: nothing being read"
+            return self._page(customer, bbs, board, offset)
         if command == "msg":
             message = rest.strip()
             if not message:
@@ -110,3 +114,18 @@ class RadioReplies:
                 bbs.mark_read(customer.name, message["id"])
             return " | ".join(f"{m['sender']}: {' '.join(m['body'].split())}" for m in unread), f"read {len(unread)} message(s)"
         return f"Unknown command. {HELP}", "unknown command"
+
+    def _page(self, customer, bbs, board, offset):
+        """One page of a board's visible posts. The header says when there are more, so truncation can't hide that."""
+        found = bbs.customer_posts(board["id"], limit=offset + PAGE + 1)
+        posts = found[offset:offset + PAGE]
+        if not posts:
+            self._reading.pop(customer.id, None)
+            return f"{board['name']}: " + ("no more posts." if offset else "nothing posted."), f"read {board['name']}"
+        further = len(found) > offset + PAGE
+        if further:
+            self._reading[customer.id] = (board["id"], offset + PAGE)
+        else:
+            self._reading.pop(customer.id, None)
+        body = " | ".join(" ".join(p["body"].split()) for p in posts)
+        return f"{board['name']}{' (send more for older)' if further else ''}: {body}", f"read {board['name']}"
