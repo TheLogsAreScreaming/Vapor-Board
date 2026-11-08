@@ -13,6 +13,7 @@ from pathlib import Path
 from .config import ShopConfig, load_shop_config
 from .status import StatusSnapshot
 from .tcp import TcpSettings, ConnectionState
+from . import serial_link
 from .radio_worker import RadioWorker
 from .radio_event_state import RadioDisplayState, reduce_event
 from .board_browser import BoardBrowser
@@ -1398,7 +1399,7 @@ def main(argv=None):
 
     on_show["Overview"] = refresh_overview
 
-    radio_card = theme.Card(lower, t, "Meshtastic radio", "Wi-Fi connection · replies on" if transmit else "Listen-only connection over Wi-Fi.").grid(row=0, column=1, sticky="nsew")
+    radio_card = theme.Card(lower, t, "Meshtastic radio", "Wi-Fi or USB · replies on" if transmit else "Listen-only connection over Wi-Fi or USB.").grid(row=0, column=1, sticky="nsew")
     radio_pill = theme.Pill(radio_card.actions, t, p.card, "neutral", "Not connected")
     radio_pill.label.pack()
     fields = ttk.Frame(radio_card.body, style="Card.TFrame")
@@ -1412,8 +1413,18 @@ def main(argv=None):
     port_box.grid(row=0, column=1, sticky="ew", padx=(t.px(MD), 0))
     host_entry, _note = theme.field(host_box, t, "RADIO ADDRESS", host_var)
     port_entry, _note = theme.field(port_box, t, "PORT", port_var, width=6)
-    ttk.Label(radio_card.body, text="The radio's IP address or name on your network. The port is usually 4403.",
+    ttk.Label(radio_card.body, text="IP address or USB device. The port is usually 4403.",
               style="Card.Caption.TLabel", wraplength=t.px(330), justify="left").pack(anchor="w", pady=(t.px(6), 0))
+
+    def find_usb_radio():
+        found = serial_link.list_ports()
+        if not found:
+            notify("warning", "No USB radio found", "Plug the radio in with a data cable and try again.")
+            return
+        host_var.set(found[0])
+        notify("info", "USB radio found", found[0] if len(found) == 1 else f"{found[0]}, one of {len(found)} USB devices. Type another if this isn't the radio.")
+
+    ttk.Button(radio_card.body, text="Find USB radio", style="Link.TButton", command=find_usb_radio).pack(anchor="w")
     settings_error = ttk.Label(radio_card.body, text="", style="Card.Danger.TLabel", wraplength=t.px(330), justify="left")
     radio_status = tk.StringVar(value=radio_presentation(RadioDisplayState())[2])
     ttk.Label(radio_card.body, textvariable=radio_status, style="Card.TLabel", wraplength=t.px(330), justify="left").pack(anchor="w", pady=(t.px(MD), 0))
@@ -1425,7 +1436,9 @@ def main(argv=None):
             notify("info", "The radio is off in demo mode", "Quit and open Vapor Board normally to connect a radio.")
             return
         try:
-            settings = TcpSettings(host=host_var.get().strip(), port=int(port_var.get()), timeout=3.0, transmissions_enabled=transmit)
+            address = host_var.get().strip()
+            settings = (serial_link.SerialSettings(path=address, transmissions_enabled=transmit) if address.startswith("/dev/")
+                        else TcpSettings(host=address, port=int(port_var.get()), timeout=3.0, transmissions_enabled=transmit))
         except (ValueError, TypeError) as exc:
             bad = port_entry if "port" in str(exc).lower() or not port_var.get().strip().isdigit() else host_entry
             bad.state(["invalid"])

@@ -49,7 +49,7 @@ class RadioWorker:
                 return
             if not session.connect():
                 if not stop.is_set():
-                    self._emit(generation, "error", "TCP connection failed")
+                    self._emit(generation, "error", "Couldn't connect to the radio")
                 return
             if stop.is_set():
                 return
