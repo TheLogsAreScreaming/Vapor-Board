@@ -1,0 +1,33 @@
+name: Mac desktop build
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'vapor_board/**'
+      - 'packaging/**'
+      - '.github/workflows/macos-build.yml'
+jobs:
+  mac:
+    name: ${{ matrix.job }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { job: mac-intel, os: macos-15-intel, label: Intel }
+          - { job: mac-apple-silicon, os: macos-15, label: AppleSilicon }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run unit tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Build app and DMG
+        run: sh packaging/build_macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Vapor-Board-${{ matrix.label }}-unsigned
+          path: |
+            dist/Vapor Board.app
+            dist/Vapor-Board-${{ matrix.label }}.dmg
