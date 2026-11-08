@@ -13,7 +13,7 @@ TEXT_SIZES = ("standard", "large", "larger")
 @dataclass(frozen=True)
 class ShopConfig:
     shop_name: str = "Vapor Board"
-    # Mailbox the desktop reads and sends as until operator sign-in exists.
+    # Shared shop mailbox every signed-in staff member reads and sends private messages as.
     operator_name: str = "Operator"
     accent_color: str = "#238C9C"
     notices_enabled: bool = True
@@ -24,6 +24,8 @@ class ShopConfig:
     # Desktop look: "system" follows macOS light/dark; text_size scales every font.
     appearance: str = "system"
     text_size: str = "standard"
+    # Return to the sign-in screen after this many idle minutes; 0 never locks.
+    auto_lock_minutes: int = 15
 
     def __post_init__(self):
         if not isinstance(self.shop_name, str) or not (1 <= len(self.shop_name.strip()) <= 80):
@@ -39,6 +41,8 @@ class ShopConfig:
             raise ValueError("minimum_customer_age must be at least 21")
         if self.appearance not in APPEARANCES:
             raise ValueError(f"appearance must be one of: {', '.join(APPEARANCES)}")
+        if type(self.auto_lock_minutes) is not int or not 0 <= self.auto_lock_minutes <= 240:
+            raise ValueError("auto_lock_minutes must be a whole number from 0 to 240")
         if self.text_size not in TEXT_SIZES:
             raise ValueError(f"text_size must be one of: {', '.join(TEXT_SIZES)}")
 

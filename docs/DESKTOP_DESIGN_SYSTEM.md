@@ -9,4 +9,4 @@ All visual decisions live in `vapor_board/ui_theme.py`; wording lives in `vapor_
 - **Components:** `Card` (title, subtitle, header actions), `ListView` (roomy rows, keyboard navigation, auto-hiding scrollbar), `text_area`, `Pill` status badge, `Toast` non-blocking notices, `empty_state`, `field`.
 - **Feedback:** success/info notices fade; warnings and errors stay until dismissed (Esc or ✕). Only destructive actions use a confirmation dialog (default button: No).
 - **Motion:** the only animation is a gentle pulse while connecting, skipped when macOS Reduce Motion is on.
-- **Keyboard:** ⌘1–5 pages, ⌘N new post/message, ⌘R refresh, ⌘↩ publish/send, Esc cancel edit, Return/Space press focused buttons, Delete removes the selected post (with confirmation).
+- **Keyboard:** ⌘1–6 pages, ⌘N new post/message, ⌘R refresh, ⌘L lock, ⌘↩ publish/send, Esc cancel edit, Return/Space press focused buttons, Delete removes the selected post (with confirmation).

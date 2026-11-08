@@ -6,6 +6,7 @@ import sqlite3
 from datetime import timezone
 import subprocess
 import sys
+import time
 import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
@@ -21,11 +22,12 @@ from . import ui_theme as theme
 from .ui_theme import XS, SM, MD, LG, XL
 from tkinter import messagebox, filedialog
 from . import backup as backups
+from . import accounts as staff_accounts
 
 # Sidebar order, grouped so everyday work sits above shop administration.
 NAVIGATION = (
     ("WORKSPACE", (("Overview", "◧"), ("Boards", "▤"), ("Messages", "✉"))),
-    ("SHOP", (("Customers", "◉"), ("Settings", "⚙"))),
+    ("SHOP", (("Customers", "◉"), ("Staff", "⚑"), ("Settings", "⚙"))),
 )
 DATA_ERRORS = (OSError, ValueError, sqlite3.DatabaseError)
 
@@ -51,6 +53,17 @@ def main():
     config, config_error = read_config(config_path)
     database = Path.home() / ".vapor-board" / "bbs.sqlite"
     mailbox = config.operator_name.strip()
+    # Staff accounts sit in their own database so restoring a board backup never changes who can sign in.
+    staff = staff_accounts.StaffDirectory(database.parent / "staff.sqlite")
+    session = [None]  # the signed-in staff Account; None while the sign-in screen is up
+
+    def record(action, detail=""):
+        """Add a line to the activity log as the signed-in staff member."""
+        if session[0] is not None:
+            try:
+                staff.log(session[0].username, action, detail)
+            except DATA_ERRORS:
+                pass
     root = tk.Tk()
     root.title(config.shop_name if config.shop_name == "Vapor Board" else f"{config.shop_name} — Vapor Board")
     t = theme.apply_theme(root, config.accent_color, config.appearance, config.text_size)
@@ -133,6 +146,7 @@ def main():
         "Boards": "Notices and discussions for your shop. Stored on this Mac only.",
         "Messages": f"Private messages for {mailbox}. Kept on this Mac and never sent over the radio.",
         "Customers": "Customer approvals and age verification.",
+        "Staff": "Who can sign in to this Mac, and what they have done.",
         "Settings": "How this copy of Vapor Board is set up.",
     }
     # Search box under the shop name; results open on their own page (not in the sidebar list).
@@ -153,6 +167,7 @@ def main():
     board_page, board_actions = page_parts["Boards"]
     messages_page, messages_actions = page_parts["Messages"]
     customers_page, _ = page_parts["Customers"]
+    staff_page, staff_actions = page_parts["Staff"]
     settings_page, settings_actions = page_parts["Settings"]
 
     messages_badge = tk.Label(nav_buttons["Messages"], name="messages_badge", bg=p.accent_fill, fg=p.on_accent,
@@ -162,6 +177,12 @@ def main():
     # Radio summary pinned to the bottom of the sidebar.
     sidebar_status = ttk.Frame(sidebar, style="Sidebar.TFrame", padding=(t.px(20), t.px(LG)))
     sidebar_status.pack(side="bottom", fill="x")
+    signed_in_row = ttk.Frame(sidebar_status, style="Sidebar.TFrame")
+    signed_in_row.pack(fill="x", pady=(0, t.px(MD)))
+    signed_in_name = tk.StringVar(value="")
+    ttk.Label(signed_in_row, name="signed_in", textvariable=signed_in_name, style="Sidebar.Caption.TLabel").pack(side="left")
+    lock_button = ttk.Button(signed_in_row, text="Lock", style="Sidebar.Link.TButton")
+    lock_button.pack(side="right")
     ttk.Label(sidebar_status, text="RADIO", style="Sidebar.Section.TLabel").pack(anchor="w")
     sidebar_pill = theme.Pill(sidebar_status, t, p.sidebar, "neutral", "Not connected")
     sidebar_pill.label.pack(anchor="w", pady=(t.px(6), t.px(XS)))
@@ -349,6 +370,7 @@ def main():
             board_entry.focus_set()
             return
         notify("success", "Board created", f"“{board_name.get().strip()}” is ready for posts.")
+        record("board created", board_name.get().strip())
         board_name.set("")
         refresh_boards(keep=board_id)
         post_editor.focus_set()
@@ -365,6 +387,7 @@ def main():
             notify("danger", "Board not moved", str(exc))
             return "break"
         if moved:
+            record("board moved", f'{board["name"]} {"up" if offset < 0 else "down"}')
             refresh_boards(keep=board["id"])
         return "break"
 
@@ -380,6 +403,7 @@ def main():
             notify("danger", "Post not pinned" if pin else "Post not unpinned", str(exc))
             return
         show_posts(keep=entry["id"])
+        record("post pinned" if pin else "post unpinned", f'#{entry["id"]} in {board["name"]}')
         notify("success", "Post pinned" if pin else "Post unpinned",
                f'It stays at the top of {board["name"]}.' if pin else "It's back in date order.")
     board_entry.bind("<Return>", lambda _e: create_local_board())
@@ -398,6 +422,7 @@ def main():
         has_posts[0] = True
         show_posts()
         notify("success", "Post published", f'Added to {board["name"]}.')
+        record("post published", board["name"])
 
     def selected_post():
         index = post_list.selected()
@@ -432,6 +457,7 @@ def main():
         post_editor.delete("1.0", "end")
         set_composer_mode(None)
         show_posts(keep=entry["id"])
+        record("post edited", f'#{entry["id"]}')
         notify("success", "Post updated")
 
     def cancel_edit(_event=None):
@@ -458,6 +484,7 @@ def main():
             post_editor.delete("1.0", "end")
             set_composer_mode(None)
         show_posts()
+        record("post deleted", f'#{entry["id"]} by {entry["author"]}')
         notify("success", "Post deleted")
 
     def publish_or_save(_event=None):
@@ -506,8 +533,8 @@ def main():
     ttk.Button(board_actions, text="New post", style="Accent.TButton", command=new_post).pack()
 
     # ==== Messages =========================================================================
-    # Private messages for the operator mailbox named in shop.json. Until operator
-    # sign-in exists (Phase 5) the sender is fixed to that mailbox, never typed in.
+    # Private messages for the shared shop mailbox named in shop.json. Every signed-in staff
+    # member reads and sends as that mailbox; the sender is never typed in.
     mail_view = ["threads"]  # threads (one row per person) | inbox | sent
     EMPTY_MAIL = {"threads": "No conversations yet", "inbox": "No messages yet", "sent": "Nothing sent yet"}
     mail_body = ttk.Frame(messages_page)
@@ -679,6 +706,7 @@ def main():
                 open_thread(index)
         else:
             switch_mail_view("sent")
+        record("message sent", f"to {recipient}")
         notify("success", "Message sent", f"Delivered to {recipient}'s inbox on this Mac.")
         return "break"
 
@@ -721,6 +749,169 @@ def main():
                  f"Confirm every customer is {config.minimum_customer_age} or older",
                  "Choose which boards each customer can see"):
         ttk.Label(planned, text=f"○   {line}", style="Card.Muted.TLabel").pack(anchor="w", pady=1)
+
+    # ==== Staff ============================================================================
+    # Accounts that may sign in on this Mac, plus the activity log. Only admins change accounts.
+    staff_body = ttk.Frame(staff_page)
+    staff_body.pack(fill="both", expand=True)
+    staff_body.columnconfigure(0, weight=3, uniform="staff")
+    staff_body.columnconfigure(1, weight=2, uniform="staff")
+    staff_body.rowconfigure(0, weight=1)
+    team_card = theme.Card(staff_body, t).grid(row=0, column=0, sticky="nsew", padx=(0, t.px(LG)))
+    team_tabs = ttk.Frame(team_card.body, style="Card.TFrame")
+    team_tabs.pack(fill="x")
+    team_view = ["team"]  # team | activity
+    team_list = theme.ListView(team_card.body, t, height=6, placeholder="No staff accounts")
+    team_list.frame.pack(fill="both", expand=True, pady=(t.px(MD), 0))
+    team_actions = ttk.Frame(team_card.body, style="Card.TFrame")
+    team_actions.pack(fill="x", pady=(t.px(MD), 0))
+    ttk.Label(team_actions, text="NEW PASSWORD FOR THE SELECTED ACCOUNT", style="Card.Field.TLabel").pack(anchor="w", pady=(0, t.px(XS)))
+    password_row = ttk.Frame(team_actions, style="Card.TFrame")
+    password_row.pack(fill="x")
+    new_password = tk.StringVar()
+    new_password_entry = ttk.Entry(password_row, name="new_password", textvariable=new_password, show="•", width=10)
+    new_password_entry.pack(side="left", fill="x", expand=True)
+    team = []
+
+    def selected_account():
+        index = team_list.selected()
+        return team[index] if team_view[0] == "team" and index is not None and index < len(team) else None
+
+    def update_staff_actions(_index=None):
+        account, me = selected_account(), session[0]
+        admin = me is not None and me.is_admin
+        can_toggle = admin and account is not None and account.username != me.username
+        toggle_button.configure(text="Enable" if account is not None and not account.active else "Disable")
+        toggle_button.state(["!disabled"] if can_toggle else ["disabled"])
+        mine = account is not None and me is not None and (admin or account.username == me.username)
+        set_password_button.state(["!disabled"] if mine else ["disabled"])
+        new_password_entry.state(["!disabled"] if mine else ["disabled"])
+
+    team_list.on_select = update_staff_actions
+
+    def refresh_staff(keep=None):
+        nonlocal team
+        for name, tab in team_tab_buttons.items():
+            tab.configure(style="SegmentActive.TButton" if name == team_view[0] else "Segment.TButton")
+        try:
+            if team_view[0] == "team":
+                team = staff.accounts()
+                me = session[0].username if session[0] else None
+                team_list.set_rows([(f"{a.display_name}{' (you)' if a.username == me else ''}  ·  {a.username}  ·  "
+                                     f"{a.role_label}{'' if a.active else '  ·  Disabled'}",
+                                     () if a.active else ("placeholder",)) for a in team])
+                index = next((i for i, a in enumerate(team) if a.username == keep), None)
+                if index is not None:
+                    team_list.select(index)
+                team_actions.pack(fill="x", pady=(t.px(MD), 0))
+                toggle_button.pack(side="right")
+            else:
+                entries = staff.activity(200)
+                team_list.set_rows([(f'{friendly_time(e["at"])}  ·  {e["actor"]}  ·  {e["action"]}'
+                                     + (f'  ·  {e["detail"]}' if e["detail"] else ""), ()) for e in entries],
+                                   placeholder="Nothing recorded yet")
+                team_actions.pack_forget()
+                toggle_button.pack_forget()
+        except DATA_ERRORS as exc:
+            team_list.set_rows([], placeholder=f"Couldn't read staff accounts: {exc}", tag="error")
+        update_staff_actions()
+
+    def switch_team_view(view):
+        team_view[0] = view
+        refresh_staff()
+
+    team_tab_buttons = {}
+    for view, label in (("team", "Team"), ("activity", "Activity log")):
+        tab = ttk.Button(team_tabs, text=label, style="Segment.TButton", command=lambda v=view: switch_team_view(v))
+        tab.pack(side="left", padx=(0, t.px(XS)))
+        team_tab_buttons[view] = tab
+
+    def toggle_account():
+        account = selected_account()
+        if account is None:
+            return
+        try:
+            changed = staff.set_active(account.username, not account.active, session[0])
+        except (staff_accounts.AccountError, *DATA_ERRORS) as exc:
+            notify("danger", "Account not changed", str(exc))
+            return
+        refresh_staff(keep=changed.username)
+        notify("success", "Account enabled" if changed.active else "Account disabled",
+               f"{changed.display_name} can sign in again." if changed.active else f"{changed.display_name} can no longer sign in.")
+
+    def set_selected_password(_event=None):
+        account = selected_account()
+        if account is None:
+            return "break"
+        try:
+            staff.set_password(account.username, new_password.get(), session[0])
+        except (staff_accounts.AccountError, *DATA_ERRORS) as exc:
+            notify("danger", "Password not changed", str(exc))
+            return "break"
+        new_password.set("")
+        notify("success", "Password changed", f"{account.display_name} signs in with the new password from now on.")
+        return "break"
+
+    set_password_button = ttk.Button(password_row, text="Set password", command=set_selected_password)
+    set_password_button.pack(side="left", padx=(t.px(SM), 0))
+    new_password_entry.bind("<Return>", set_selected_password)
+    toggle_button = ttk.Button(team_tabs, text="Disable", command=toggle_account)
+
+    add_card = theme.Card(staff_body, t, "Add a staff member", "They sign in with their own username and password.").grid(row=0, column=1, sticky="new")
+    add_card.subtitle.configure(wraplength=t.px(230))
+    add_name, add_user, add_pass = tk.StringVar(), tk.StringVar(), tk.StringVar()
+    add_entries = {}
+    for label, variable, name, secret in (("NAME", add_name, "add_name", False), ("USERNAME", add_user, "add_username", False),
+                                          ("PASSWORD", add_pass, "add_password", True)):
+        ttk.Label(add_card.body, text=label, style="Card.Field.TLabel").pack(anchor="w", pady=(0 if not add_entries else t.px(SM), t.px(XS)))
+        add_entries[name] = ttk.Entry(add_card.body, name=name, textvariable=variable, show="•" if secret else "", width=10)
+        add_entries[name].pack(fill="x")
+    add_role = [staff_accounts.STAFF]
+    role_row = ttk.Frame(add_card.body, style="Card.TFrame")
+    role_row.pack(fill="x", pady=(t.px(MD), 0))
+    role_buttons = {}
+
+    def choose_role(role):
+        add_role[0] = role
+        for name, button in role_buttons.items():
+            button.configure(style="SegmentActive.TButton" if name == role else "Segment.TButton")
+
+    for role, label in ((staff_accounts.STAFF, "Staff"), (staff_accounts.ADMIN, "Admin")):
+        role_buttons[role] = ttk.Button(role_row, text=label, command=lambda r=role: choose_role(r))
+        role_buttons[role].pack(side="left", padx=(0, t.px(XS)))
+    choose_role(staff_accounts.STAFF)
+
+    def add_staff_member(_event=None):
+        try:
+            made = staff.create(add_user.get(), add_name.get(), add_pass.get(), add_role[0], actor=session[0])
+        except (staff_accounts.AccountError, *DATA_ERRORS) as exc:
+            notify("danger", "Staff member not added", str(exc))
+            return "break"
+        for variable in (add_name, add_user, add_pass):
+            variable.set("")
+        choose_role(staff_accounts.STAFF)
+        team_view[0] = "team"
+        refresh_staff(keep=made.username)
+        notify("success", "Staff member added", f"{made.display_name} can now sign in as “{made.username}”.")
+        return "break"
+
+    add_button = ttk.Button(add_card.body, text="Add staff member", style="Accent.TButton", command=add_staff_member)
+    add_button.pack(anchor="w", pady=(t.px(MD), 0))
+    add_entries["add_password"].bind("<Return>", add_staff_member)
+    add_note = ttk.Label(add_card.body, text="", style="Card.Caption.TLabel", wraplength=t.px(230), justify="left")
+
+    def show_staff():
+        admin = session[0] is not None and session[0].is_admin
+        for widget in (*add_entries.values(), *role_buttons.values(), add_button):
+            widget.state(["!disabled"] if admin else ["disabled"])
+        if admin:
+            add_note.pack_forget()
+        else:
+            add_note.configure(text="Only an owner or admin can add staff or disable accounts.")
+            add_note.pack(anchor="w", pady=(t.px(SM), 0))
+        refresh_staff()
+
+    on_show["Staff"] = show_staff
 
     # ==== Settings =========================================================================
     settings_body = ttk.Frame(settings_page)
@@ -802,6 +993,7 @@ def main():
             notify("danger", "Backup not made", str(exc))
             return
         refresh_storage()
+        record("backup made", made.path.name)
         notify("success", "Backup saved", f"{made.summary} copied to {short_path(made.path)}.")
 
     def restore_from_backup():
@@ -831,6 +1023,7 @@ def main():
         refresh_mail()
         refresh_overview()
         refresh_storage()
+        record("backup restored", f"{info.path.name} ({info.summary})")
         notify("success", "Backup restored",
                f"{info.summary} restored." + (f" Previous data saved as {safety.path.name}." if safety else ""))
 
@@ -847,6 +1040,7 @@ def main():
     settings_card(right_settings, "Customer access", (
         ("Approval before joining", ("success", "Required") if config.customer_access_requires_approval else ("warning", "Not required"), None),
         ("Minimum age", f"{config.minimum_customer_age}+", None),
+        ("Staff auto-lock", f"After {plural(config.auto_lock_minutes, 'minute')}" if config.auto_lock_minutes else "Off", None),
     ), pady=(t.px(LG), 0))
     ttk.Label(right_settings, text="To change a setting, edit shop.json and restart Vapor Board.",
               style="Caption.TLabel", wraplength=t.px(330), justify="left").pack(anchor="w", pady=(t.px(MD), 0))
@@ -1190,6 +1384,136 @@ def main():
 
     show_preview()
 
+    # ==== Sign-in ==========================================================================
+    # Covers the whole window until a staff member signs in. The first launch creates the owner account.
+    gate = ttk.Frame(root, name="gate")
+    gate_card = theme.Card(gate, t, padding=XL)
+    gate_card.outer.place(relx=0.5, rely=0.5, anchor="center", width=t.px(400))
+    gate_vars = {name: tk.StringVar() for name in ("name", "username", "password", "confirm")}
+    gate_error = [None]
+    last_activity = [time.monotonic()]
+    lock_job = [None]
+
+    def gate_field(label, name, secret=False):
+        ttk.Label(gate_card.body, text=label, style="Card.Field.TLabel").pack(anchor="w", pady=(t.px(MD), t.px(XS)))
+        entry = ttk.Entry(gate_card.body, name=f"gate_{name}", textvariable=gate_vars[name], show="•" if secret else "")
+        entry.pack(fill="x")
+        return entry
+
+    def gate_problem(message):
+        gate_error[0].configure(text=message)
+        gate_error[0].pack(anchor="w", pady=(t.px(MD), 0), before=gate_submit[0])
+
+    gate_submit = [None]
+
+    def open_gate():
+        """Show the owner set-up form on first launch, otherwise the sign-in form."""
+        try:
+            first = not staff.exists()
+        except DATA_ERRORS as exc:
+            first = False
+            notify("danger", "Staff accounts couldn't be read", str(exc))
+        for child in gate_card.body.winfo_children():
+            child.destroy()
+        for variable in gate_vars.values():
+            variable.set("")
+        tk.Label(gate_card.body, text=config.shop_name.strip()[:1].upper(), bg=p.accent_fill, fg=p.on_accent,
+                 font=t.fonts["monogram"], width=2, pady=t.px(4)).pack(anchor="w")
+        ttk.Label(gate_card.body, text="Set up Vapor Board" if first else f"Sign in to {config.shop_name}",
+                  style="Card.Headline.TLabel").pack(anchor="w", pady=(t.px(MD), 0))
+        ttk.Label(gate_card.body, style="Card.Muted.TLabel", wraplength=t.px(330), justify="left",
+                  text="Create the owner account. You can add staff afterwards on the Staff page." if first
+                  else "Use your staff username and password.").pack(anchor="w", pady=(t.px(2), 0))
+        if first:
+            first_entry = gate_field("YOUR NAME", "name")
+            gate_field("USERNAME", "username")
+            gate_field("PASSWORD", "password", secret=True)
+            last = gate_field("CONFIRM PASSWORD", "confirm", secret=True)
+        else:
+            first_entry = gate_field("USERNAME", "username")
+            last = gate_field("PASSWORD", "password", secret=True)
+        gate_error[0] = ttk.Label(gate_card.body, text="", style="Card.Danger.TLabel", wraplength=t.px(330), justify="left")
+        gate_submit[0] = ttk.Button(gate_card.body, text="Create owner account" if first else "Sign in",
+                                    style="Accent.TButton", command=create_owner if first else sign_in)
+        gate_submit[0].pack(anchor="e", pady=(t.px(LG), 0))
+        last.bind("<Return>", lambda _e: (gate_submit[0].invoke(), "break")[1])
+        gate.place(x=0, y=0, relwidth=1, relheight=1)
+        gate.lift()
+        first_entry.focus_set()
+
+    def enter(account):
+        session[0] = account
+        signed_in_name.set(f"{account.display_name}  ·  {account.role_label}")
+        if editing[0] is None:
+            author_name.set(account.display_name)
+        new_author[0] = account.display_name
+        gate.place_forget()
+        last_activity[0] = time.monotonic()
+        schedule_lock()
+        show_page(current[0])
+
+    def create_owner():
+        if gate_vars["password"].get() != gate_vars["confirm"].get():
+            gate_problem("The passwords don't match.")
+            return
+        try:
+            account = staff.create(gate_vars["username"].get(), gate_vars["name"].get(), gate_vars["password"].get())
+        except (staff_accounts.AccountError, *DATA_ERRORS) as exc:
+            gate_problem(f"{exc}.")
+            return
+        staff.log(account.username, "signed in")
+        enter(account)
+        notify("success", "Owner account created", "Add your staff on the Staff page.")
+
+    def sign_in():
+        try:
+            account = staff.authenticate(gate_vars["username"].get(), gate_vars["password"].get())
+        except (staff_accounts.AccountError, *DATA_ERRORS) as exc:
+            gate_problem(f"{exc}.")
+            return
+        if account is None:
+            gate_vars["password"].set("")
+            gate_problem("That username and password don't match an active account.")
+            return
+        enter(account)
+
+    def lock(_event=None, reason="signed out"):
+        if session[0] is None:
+            return "break"
+        record(reason)
+        session[0] = None
+        signed_in_name.set("")
+        if lock_job[0] is not None:
+            root.after_cancel(lock_job[0])
+            lock_job[0] = None
+        open_gate()
+        return "break"
+
+    lock_button.configure(command=lock)
+
+    def schedule_lock():
+        """Lock after config.auto_lock_minutes without a key press or click (0 turns it off)."""
+        if lock_job[0] is not None:
+            root.after_cancel(lock_job[0])
+            lock_job[0] = None
+        if not config.auto_lock_minutes or session[0] is None:
+            return
+        idle = time.monotonic() - last_activity[0]
+        if idle >= config.auto_lock_minutes * 60:
+            lock(reason="locked after inactivity")
+            return
+        lock_job[0] = root.after(int(min(30, config.auto_lock_minutes * 60 - idle) * 1000) + 50, schedule_lock)
+
+    def touched(_event=None):
+        last_activity[0] = time.monotonic()
+
+    root.bind_all("<KeyPress>", touched, add="+")
+    root.bind_all("<ButtonPress>", touched, add="+")
+
+    def signed_in(handler):
+        """Keyboard shortcuts do nothing while the sign-in screen is up."""
+        return lambda event: handler(event) if session[0] is not None else "break"
+
     # ---- status bar, keyboard, start-up ---------------------------------------------------
     root.protocol("WM_DELETE_WINDOW", on_close)
     status_bar = tk.Frame(main_area, bg=p.background)
@@ -1198,16 +1522,18 @@ def main():
     footer = tk.Label(status_bar, text=StatusSnapshot().footer, bg=p.background, fg=p.muted,
                       font=t.fonts["caption"], padx=t.px(28), pady=t.px(7), anchor="w")
     footer.pack(side="left")
-    tk.Label(status_bar, text=f"{key}1–5 switch pages  ·  {key}N new  ·  {key}R refresh", bg=p.background, fg=p.subtle,
+    tk.Label(status_bar, text=f"{key}1–6 switch pages  ·  {key}N new  ·  {key}R refresh  ·  {key}L lock", bg=p.background, fg=p.subtle,
              font=t.fonts["caption"], padx=t.px(28)).pack(side="right")
     page_host.pack(fill="both", expand=True)
 
     order = [name for _section, entries in NAVIGATION for name, _glyph in entries]
     for number, name in enumerate(order, start=1):
-        root.bind_all(f"<{mod}-Key-{number}>", lambda _e, name=name: show_page(name))
-    root.bind_all(f"<{mod}-n>", lambda _e: new_message() if current[0] == "Messages" else new_post())
-    root.bind_all(f"<{mod}-r>", lambda _e: {"Boards": refresh_boards, "Messages": refresh_mail, "Search": run_search}.get(current[0], refresh_overview)())
-    root.bind_all(f"<{mod}-f>", focus_search)
+        root.bind_all(f"<{mod}-Key-{number}>", signed_in(lambda _e, name=name: show_page(name)))
+    root.bind_all(f"<{mod}-n>", signed_in(lambda _e: new_message() if current[0] == "Messages" else new_post()))
+    root.bind_all(f"<{mod}-r>", signed_in(lambda _e: {"Boards": refresh_boards, "Messages": refresh_mail, "Search": run_search,
+                                                       "Staff": refresh_staff}.get(current[0], refresh_overview)()))
+    root.bind_all(f"<{mod}-f>", signed_in(focus_search))
+    root.bind_all(f"<{mod}-l>", lock)
     root.bind_all("<Escape>", lambda _e: toast.hide(), add="+")
 
     unread_count.trace_add("write", lambda *_: unread_note.set(
@@ -1218,6 +1544,7 @@ def main():
         notify("warning", "Settings file couldn't be read", "Using default settings. See Settings for details.")
     update_footer()
     show_page("Overview")
+    open_gate()
     root.after(100, poll_radio)
     root.mainloop()
 
