@@ -98,10 +98,9 @@ class DesktopCustomersUiTests(DesktopHarness):
         from vapor_board.bbs import BulletinBoard
         from vapor_board.customers import CustomerBook
 
-        self.seed()
         database = self.home / ".vapor-board" / "bbs.sqlite"
         bbs = BulletinBoard(database)
-        board = bbs.list_boards()[0]["id"]
+        board = bbs.create_board("Store hours")
         staff = SimpleNamespace(username="owner", active=True)
         book = CustomerBook(database)
         customer = book.add("Sam", actor=staff)

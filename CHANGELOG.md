@@ -3,7 +3,17 @@
 ## Unreleased
 - **Customer questions:** `ask` holds a question for staff, and the answer is posted without the customer's name.
 - **Following boards:** `follow`, `unfollow` and `new`. Replies only when asked, so no extra radio traffic.
+
+## 1.0.0 RC 3
+- **Apple Silicon:** a separate DMG for M-series Macs alongside the Intel one. Both are unsigned.
+- **USB radios:** *Find USB radio* on the Overview page. Listen-only by default, the same as Wi-Fi. Not yet tested on a real radio.
+- **Shop profile:** hours and contact details in Settings, on the kiosk, and through the radio `info` command.
+- **Update check:** off by default. File ▸ Check for Updates runs it when asked.
+- **Staff message alerts:** a Mac notification when a customer's radio message arrives.
+- **Settings** now has four tabs: Shop, Storage, Radio, Customer access.
+- **Kiosk branding:** logo, tagline and text size.
 - Radio replies: `more` reads older posts on a board.
+- Getting started shows every step at the smallest window size.
 
 ## 1.0.0 RC 2
 - **Owner recovery code:** shown once at set-up; *Forgot password?* on the sign-in screen resets an owner or admin password.
