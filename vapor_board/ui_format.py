@@ -42,6 +42,45 @@ def radio_presentation(state):
     return "neutral", "Not connected", "Enter your radio's address and choose Connect. Nothing is sent to the radio."
 
 
+def parse_local_time(text, end_of_day=False):
+    """UTC 'YYYY-MM-DD HH:MM:SS' for local text like '2026-11-20', '2026-11-20 9:30' or '2026-11-20 9:30 PM'.
+
+    Blank text gives None. A date alone means the start of that day, or (end_of_day) the end of it.
+    """
+    text = " ".join(str(text or "").split()).upper()
+    if not text:
+        return None
+    for pattern in ("%Y-%m-%d %H:%M", "%Y-%m-%d %I:%M %p", "%Y-%m-%d %I %p", "%Y-%m-%d"):
+        try:
+            moment = datetime.strptime(text, pattern)
+            break
+        except ValueError:
+            continue
+    else:
+        raise ValueError(f"“{text.lower()}” isn't a date like 2026-11-20 or 2026-11-20 9:30 PM")
+    if pattern == "%Y-%m-%d" and end_of_day:
+        moment = moment.replace(hour=23, minute=59, second=59)
+    return moment.astimezone().astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def local_time_text(stamp):
+    """'2026-11-20 9:30 PM' local form of a UTC stamp, for editing; '' for None."""
+    if not stamp:
+        return ""
+    moment = datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).astimezone()
+    return moment.strftime("%Y-%m-%d ") + moment.strftime("%I:%M %p").lstrip("0")
+
+
+def schedule_state(entry, now=None):
+    """'scheduled', 'expired' or 'live' for a post with optional publish_at / expires_at (UTC)."""
+    now = now or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    if entry.get("publish_at") and entry["publish_at"] > now:
+        return "scheduled"
+    if entry.get("expires_at") and entry["expires_at"] <= now:
+        return "expired"
+    return "live"
+
+
 def first_line(body, limit):
     line = body.splitlines()[0] if body else ""
     return line if len(line) <= limit else line[:limit - 1].rstrip() + "…"

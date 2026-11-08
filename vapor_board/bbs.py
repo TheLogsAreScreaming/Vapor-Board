@@ -1,7 +1,25 @@
 """Offline-first local bulletin board engine. No radio transport or network I/O."""
 
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
+
+STAMP = "%Y-%m-%d %H:%M:%S"  # SQLite CURRENT_TIMESTAMP form, UTC
+
+
+def utc_now():
+    return datetime.now(timezone.utc).strftime(STAMP)
+
+
+def _stamp(value, field):
+    """None, or a validated UTC 'YYYY-MM-DD HH:MM:SS' string."""
+    if value in (None, ""):
+        return None
+    try:
+        datetime.strptime(value, STAMP)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be a UTC time like 2026-11-20 09:00:00") from exc
+    return value
 
 
 class BulletinBoard:
@@ -29,6 +47,10 @@ class BulletinBoard:
             db.execute("UPDATE boards SET position = id WHERE position IS NULL")
             if "pinned_at" not in self._columns(db, "posts"):
                 db.execute("ALTER TABLE posts ADD COLUMN pinned_at TEXT")
+            # Scheduled publication and expiry (UTC); NULL means "now" and "never".
+            for column in ("publish_at", "expires_at"):
+                if column not in self._columns(db, "posts"):
+                    db.execute(f"ALTER TABLE posts ADD COLUMN {column} TEXT")
             # Boards customers may read (kiosk, radio replies). Existing boards stay visible.
             if "customer_visible" not in self._columns(db, "boards"):
                 db.execute("ALTER TABLE boards ADD COLUMN customer_visible INTEGER NOT NULL DEFAULT 1")
@@ -90,14 +112,44 @@ class BulletinBoard:
             db.executemany("UPDATE boards SET position = ? WHERE id = ?", [(n, i) for n, i in enumerate(order, start=1)])
             return True
 
-    def post(self, board_id, author, body):
+    @staticmethod
+    def _schedule(publish_at, expires_at):
+        publish_at, expires_at = _stamp(publish_at, "publish_at"), _stamp(expires_at, "expires_at")
+        if publish_at and expires_at and expires_at <= publish_at:
+            raise ValueError("The end time must be after the start time")
+        return publish_at, expires_at
+
+    def post(self, board_id, author, body, publish_at=None, expires_at=None):
+        """Add a post. publish_at/expires_at (UTC) keep it from customers before/after those times."""
         author = self._text(author, "author", 80)
         body = self._text(body, "post", 4000)
         if type(board_id) is not int or board_id < 1:
             raise ValueError("invalid board id")
+        publish_at, expires_at = self._schedule(publish_at, expires_at)
         with self._connect() as db:
-            cursor = db.execute("INSERT INTO posts (board_id, author, body) VALUES (?, ?, ?)", (board_id, author, body))
+            cursor = db.execute("INSERT INTO posts (board_id, author, body, publish_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+                                (board_id, author, body, publish_at, expires_at))
             return cursor.lastrowid
+
+    def set_schedule(self, post_id, publish_at=None, expires_at=None):
+        """Change when a post starts and stops showing to customers (None = now / never)."""
+        if type(post_id) is not int or post_id < 1:
+            raise ValueError("invalid post id")
+        publish_at, expires_at = self._schedule(publish_at, expires_at)
+        with self._connect() as db:
+            if db.execute("UPDATE posts SET publish_at = ?, expires_at = ? WHERE id = ?", (publish_at, expires_at, post_id)).rowcount != 1:
+                raise ValueError("post not found")
+
+    def customer_posts(self, board_id, now=None, limit=50):
+        """Posts customers may see right now: published, not expired, pinned first then newest."""
+        if type(board_id) is not int or board_id < 1:
+            raise ValueError("invalid board id")
+        now = _stamp(now, "now") or utc_now()
+        with self._connect() as db:
+            return [dict(row) for row in db.execute(
+                "SELECT id, board_id, author, body, created_at, pinned_at, publish_at, expires_at FROM posts "
+                "WHERE board_id = ? AND (publish_at IS NULL OR publish_at <= ?) AND (expires_at IS NULL OR expires_at > ?) "
+                "ORDER BY pinned_at IS NULL, pinned_at DESC, id DESC LIMIT ?", (board_id, now, now, limit))]
 
     def edit_post(self, post_id, body):
         """Replace a post's body; the original author is kept."""
@@ -133,7 +185,7 @@ class BulletinBoard:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be 1–100")
         with self._connect() as db:
-            return [dict(row) for row in db.execute("SELECT id, board_id, author, body, created_at, pinned_at FROM posts WHERE board_id = ? "
+            return [dict(row) for row in db.execute("SELECT id, board_id, author, body, created_at, pinned_at, publish_at, expires_at FROM posts WHERE board_id = ? "
                 "ORDER BY pinned_at IS NULL, pinned_at DESC, id DESC LIMIT ?", (board_id, limit))]
 
     def send_mail(self, sender, recipient, body):
