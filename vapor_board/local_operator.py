@@ -22,11 +22,10 @@ def inspect_database(path, board_id=None):
             order = "position, id" if "position" in _columns(db, "boards") else "id"
             rows = db.execute(f"SELECT id, name FROM boards ORDER BY {order}").fetchall()
             return {"boards": [dict(row) for row in rows]}
-        if "pinned_at" in _columns(db, "posts"):
-            query = ("SELECT id, board_id, author, body, created_at, pinned_at FROM posts WHERE board_id = ? "
-                     "ORDER BY pinned_at IS NULL, pinned_at DESC, id DESC LIMIT 50")
-        else:
-            query = "SELECT id, board_id, author, body, created_at, NULL AS pinned_at FROM posts WHERE board_id = ? ORDER BY id DESC LIMIT 50"
+        columns = _columns(db, "posts")
+        optional = ", ".join(name if name in columns else f"NULL AS {name}" for name in ("pinned_at", "publish_at", "expires_at"))
+        order = "pinned_at IS NULL, pinned_at DESC, id DESC" if "pinned_at" in columns else "id DESC"
+        query = f"SELECT id, board_id, author, body, created_at, {optional} FROM posts WHERE board_id = ? ORDER BY {order} LIMIT 50"
         rows = db.execute(query, (board_id,)).fetchall()
         return {"posts": [dict(row) for row in rows]}
 

@@ -17,11 +17,13 @@ from .radio_worker import RadioWorker
 from .radio_event_state import RadioDisplayState, reduce_event
 from .board_browser import BoardBrowser
 from .bbs import BulletinBoard
-from .ui_format import friendly_time, radio_presentation, first_line, plural
+from .ui_format import friendly_time, radio_presentation, first_line, plural, parse_local_time, local_time_text, schedule_state
 from . import ui_theme as theme
 from .ui_theme import XS, SM, MD, LG, XL
 from tkinter import messagebox, filedialog
 from . import backup as backups
+from .export import export_csv
+from . import demo as demo_mode
 from . import accounts as staff_accounts
 from .customers import CustomerBook, CustomerError
 
@@ -49,10 +51,17 @@ def short_path(path):
         return str(path)
 
 
-def main():
-    config_path = Path.home() / ".vapor-board" / "shop.json"
-    config, config_error = read_config(config_path)
-    database = Path.home() / ".vapor-board" / "bbs.sqlite"
+def main(argv=None):
+    demo = "--demo" in (sys.argv[1:] if argv is None else argv)
+    if demo:  # sample shop in its own folder; real data is never opened
+        home, demo_account = demo_mode.prepare()
+        config, config_error = demo_mode.CONFIG, None
+        config_path = home / "shop.json"
+    else:
+        home, demo_account = Path.home() / ".vapor-board", None
+        config_path = home / "shop.json"
+        config, config_error = read_config(config_path)
+    database = home / "bbs.sqlite"
     mailbox = config.operator_name.strip()
     # Staff accounts sit in their own database so restoring a board backup never changes who can sign in.
     staff = staff_accounts.StaffDirectory(database.parent / "staff.sqlite")
@@ -67,6 +76,8 @@ def main():
                 pass
     root = tk.Tk()
     root.title(config.shop_name if config.shop_name == "Vapor Board" else f"{config.shop_name} — Vapor Board")
+    if demo:
+        root.title("Vapor Board demo — sample data, radio off")
     t = theme.apply_theme(root, config.accent_color, config.appearance, config.text_size)
     p = t.palette
     width = min(t.px(1040), root.winfo_screenwidth() - 40)
@@ -233,8 +244,22 @@ def main():
     author_name = tk.StringVar(value=mailbox)
     author_entry = ttk.Entry(author_row, textvariable=author_name)
     author_entry.pack(side="left", fill="x", expand=True, padx=(t.px(MD), 0))
+    # Optional schedule: customers (kiosk, radio) see the post only between these local times.
+    schedule_row = ttk.Frame(composer.body, style="Card.TFrame")
+    schedule_row.pack(fill="x", pady=(0, t.px(SM)))
+    show_from, show_until = tk.StringVar(), tk.StringVar()
+    ttk.Label(schedule_row, text="SHOW FROM", style="Card.Field.TLabel").pack(side="left")
+    from_entry = ttk.Entry(schedule_row, name="publish_at", textvariable=show_from, width=9)
+    from_entry.pack(side="left", fill="x", expand=True, padx=(t.px(SM), t.px(MD)))
+    ttk.Label(schedule_row, text="UNTIL", style="Card.Field.TLabel").pack(side="left")
+    until_entry = ttk.Entry(schedule_row, name="expires_at", textvariable=show_until, width=9)
+    until_entry.pack(side="left", fill="x", expand=True, padx=(t.px(SM), 0))
     _holder, post_editor = theme.text_area(composer.body, t, height=4)
     _holder.pack(fill="x")
+
+    def schedule_values():
+        """(publish_at, expires_at) in UTC from the schedule fields; raises ValueError for unreadable dates."""
+        return parse_local_time(show_from.get()), parse_local_time(show_until.get(), end_of_day=True)
     composer.outer.pack_configure(side="bottom", before=reading_card.outer)
     editing = [None]  # post being edited, or None when writing a new one
     new_author = [mailbox]  # author typed for new posts, restored after an edit
@@ -254,6 +279,8 @@ def main():
             publish_button.configure(text="Save changes")
             cancel_button.state(["!disabled"])
             author_name.set(entry["author"])  # edits keep the original author
+            show_from.set(local_time_text(entry.get("publish_at")))
+            show_until.set(local_time_text(entry.get("expires_at")))
             author_entry.state(["disabled"])
             composer_hint.set(f"{key}↩ save  ·  Esc cancel")
         else:
@@ -263,6 +290,8 @@ def main():
             cancel_button.state(["disabled"])
             if author_entry.instate(["disabled"]):
                 author_name.set(new_author[0])
+                show_from.set("")
+                show_until.set("")
             author_entry.state(["!disabled"])
             composer_hint.set(f"{key}↩ publish")
         publish_button.state(["!disabled"] if board else ["disabled"])
@@ -302,14 +331,20 @@ def main():
             start = posts.index("end-1c")
             posts.insert("end", entry["author"], "author")
             pinned = "  ·  Pinned" if entry.get("pinned_at") else ""
-            posts.insert("end", f'  ·  #{entry["id"]}  ·  {friendly_time(entry["created_at"])}{pinned}\n', "meta")
+            state = schedule_state(entry)
+            timing = (f'  ·  Shows from {friendly_time(entry["publish_at"])}' if state == "scheduled"
+                      else "  ·  Expired, hidden from customers" if state == "expired"
+                      else f'  ·  Until {friendly_time(entry["expires_at"])}' if entry.get("expires_at") else "")
+            posts.insert("end", f'  ·  #{entry["id"]}  ·  {friendly_time(entry["created_at"])}{pinned}{timing}\n', "meta")
             posts.insert("end", entry["body"])
             posts.mark_set(f"post{index}", start)
             posts.mark_gravity(f"post{index}", "left")
         if not shown_posts:
             posts.insert("1.0", error or "No posts yet.", "placeholder")
         posts.configure(state="disabled")
-        post_list.set_rows([(f'{"◆  " if entry.get("pinned_at") else ""}{entry["author"]} — {first_line(entry["body"], 40)}', ())
+        post_list.set_rows([(f'{"◆  " if entry.get("pinned_at") else ""}{"◷  " if schedule_state(entry) != "live" else ""}'
+                             f'{entry["author"]} — {first_line(entry["body"], 40)}',
+                             ("placeholder",) if schedule_state(entry) == "expired" else ())
                             for entry in shown_posts],
                            placeholder=error or "No posts yet")
         if keep is not None:
@@ -415,11 +450,13 @@ def main():
             notify("warning", "Choose a board first", "Pick the board this post belongs to.")
             return
         try:
-            BulletinBoard(database).post(board["id"], author_name.get(), post_editor.get("1.0", "end-1c"))
+            BulletinBoard(database).post(board["id"], author_name.get(), post_editor.get("1.0", "end-1c"), *schedule_values())
         except DATA_ERRORS as exc:
             notify("danger", "Post not published", str(exc))
             return
         post_editor.delete("1.0", "end")
+        show_from.set("")
+        show_until.set("")
         has_posts[0] = True
         show_posts()
         notify("success", "Post published", f'Added to {board["name"]}.')
@@ -451,7 +488,10 @@ def main():
         if entry is None:
             return
         try:
-            BulletinBoard(database).edit_post(entry["id"], post_editor.get("1.0", "end-1c"))
+            publish_at, expires_at = BulletinBoard._schedule(*schedule_values())  # check before changing anything
+            bbs = BulletinBoard(database)
+            bbs.edit_post(entry["id"], post_editor.get("1.0", "end-1c"))
+            bbs.set_schedule(entry["id"], publish_at, expires_at)
         except DATA_ERRORS as exc:
             notify("danger", "Post not updated", str(exc))
             return
@@ -1352,6 +1392,9 @@ def main():
     pulse_job = [None]
 
     def connect_radio(_event=None):
+        if demo:
+            notify("info", "The radio is off in demo mode", "Quit and open Vapor Board normally to connect a radio.")
+            return
         try:
             settings = TcpSettings(host=host_var.get().strip(), port=int(port_var.get()), timeout=3.0)
         except (ValueError, TypeError) as exc:
@@ -1414,10 +1457,12 @@ def main():
         radio_status.set(explanation)
         technical.configure(text=f"Technical detail: {display_state[0].detail} · {snapshot.radio_label}")
         busy = display_state[0].tcp in (ConnectionState.CONNECTING, ConnectionState.CONNECTED)
-        connect_button.state(["disabled"] if busy else ["!disabled"])
+        connect_button.state(["disabled"] if busy or demo else ["!disabled"])
+        if demo:
+            radio_status.set("Demo mode: radio connections are switched off.")
         disconnect_button.state(["!disabled"] if busy else ["disabled"])
         for entry in (host_entry, port_entry):
-            entry.state(["disabled"] if busy else ["!disabled"])
+            entry.state(["disabled"] if busy or demo else ["!disabled"])
         if display_state[0].tcp == ConnectionState.CONNECTING and not t.reduce_motion and pulse_job[0] is None:
             pulse_job[0] = root.after(650, pulse, False)
 
@@ -1737,7 +1782,7 @@ def main():
         kiosk_text.configure(state="normal")
         kiosk_text.delete("1.0", "end")
         try:
-            entries = BulletinBoard(database).list_posts(board["id"])
+            entries = BulletinBoard(database).customer_posts(board["id"])
         except DATA_ERRORS as exc:
             entries = []
             kiosk_text.insert("end", f"This board can't be shown right now ({exc}).", "placeholder")
@@ -1849,6 +1894,34 @@ def main():
     root.bind_all(f"<{mod}-l>", lock)
     root.bind_all("<Escape>", lambda _e: toast.hide(), add="+")
 
+    # ---- menu bar (macOS shows it at the top of the screen) -------------------------------
+    def export_now():
+        folder = home / "exports" if demo else Path.home() / "Documents" / "Vapor Board Exports"
+        try:
+            made, counts = export_csv(database, staff.path, folder)
+        except DATA_ERRORS as exc:
+            notify("danger", "Export failed", str(exc))
+            return
+        record("exported spreadsheets", made.name)
+        notify("success", "Spreadsheets exported",
+               f'{plural(counts["posts.csv"], "post")}, {plural(counts["messages.csv"], "message")} and '
+               f'{plural(counts["customers.csv"], "customer")} saved to {short_path(made)}.')
+
+    def when_signed_in(command):
+        return lambda: command() if session[0] is not None else None
+
+    menubar = tk.Menu(root, name="menubar")
+    file_menu = tk.Menu(menubar, name="file", tearoff=0)
+    for label, command, accelerator in (("Back Up Now", back_up_now, None), ("Restore From Backup…", restore_from_backup, None),
+                                        (None, None, None), ("Export as Spreadsheets (CSV)", export_now, None),
+                                        (None, None, None), ("Start Kiosk", start_kiosk, None), ("Lock", lock, f"{key}L")):
+        if label is None:
+            file_menu.add_separator()
+        else:
+            file_menu.add_command(label=label, command=when_signed_in(command), accelerator=accelerator or "")
+    menubar.add_cascade(label="File", menu=file_menu)
+    root.configure(menu=menubar)
+
     unread_count.trace_add("write", lambda *_: unread_note.set(
         "You're all caught up" if unread_count.get() == "0" else f"Waiting in the {mailbox} inbox"))
     refresh_boards()
@@ -1857,7 +1930,11 @@ def main():
         notify("warning", "Settings file couldn't be read", "Using default settings. See Settings for details.")
     update_footer()
     show_page("Overview")
-    open_gate()
+    if demo_account is not None:
+        enter(demo_account)
+        notify("info", "Demo mode", "Sample shop data. Changes are thrown away next time. The radio is off.")
+    else:
+        open_gate()
     root.after(100, poll_radio)
     root.mainloop()
 

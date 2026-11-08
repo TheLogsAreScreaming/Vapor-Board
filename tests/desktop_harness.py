@@ -34,6 +34,7 @@ class DesktopHarness(unittest.TestCase):
         self.staff = StaffDirectory(self.staff_path)
         self.staff.create(OWNER, "Operator", OWNER_PASSWORD, iterations=1000)
         self.sign_in_as = (OWNER, OWNER_PASSWORD)
+        self.argv = []  # command-line arguments for desktop.main (e.g. ["--demo"])
 
     def write_shop(self, settings):
         (self.home / ".vapor-board" / "shop.json").write_text(
@@ -60,7 +61,7 @@ class DesktopHarness(unittest.TestCase):
                 mock.patch.multiple(desktop.messagebox, showwarning=unexpected, showerror=unexpected,
                                     showinfo=unexpected, askyesno=unexpected), \
                 mock.patch.object(desktop.filedialog, "askopenfilename", unexpected):
-            desktop.main()
+            desktop.main(self.argv)
 
     # ---- signing in ----------------------------------------------------------------------
     @staticmethod
