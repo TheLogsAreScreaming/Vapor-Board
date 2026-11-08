@@ -22,6 +22,8 @@ class FramedTcpReader:
         except ConnectionError:
             self.decoder.reset()
             raise
+        if chunk is None:  # quiet radio: keep any partial frame for the next read
+            return []
         if not chunk:
             self.decoder.reset()
             return []

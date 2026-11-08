@@ -24,6 +24,7 @@ from tkinter import messagebox, filedialog
 from . import backup as backups
 from .export import export_csv
 from . import demo as demo_mode
+from .radio_replies import RadioReplies
 from . import accounts as staff_accounts
 from .customers import CustomerBook, CustomerError
 
@@ -62,6 +63,7 @@ def main(argv=None):
         config_path = home / "shop.json"
         config, config_error = read_config(config_path)
     database = home / "bbs.sqlite"
+    transmit = config.transmissions_enabled and not demo  # replies to approved customers' direct messages
     mailbox = config.operator_name.strip()
     # Staff accounts sit in their own database so restoring a board backup never changes who can sign in.
     staff = staff_accounts.StaffDirectory(database.parent / "staff.sqlite")
@@ -198,7 +200,8 @@ def main(argv=None):
     ttk.Label(sidebar_status, text="RADIO", style="Sidebar.Section.TLabel").pack(anchor="w")
     sidebar_pill = theme.Pill(sidebar_status, t, p.sidebar, "neutral", "Not connected")
     sidebar_pill.label.pack(anchor="w", pady=(t.px(6), t.px(XS)))
-    ttk.Label(sidebar_status, text="Listen-only · transmit off", style="Sidebar.Caption.TLabel").pack(anchor="w")
+    ttk.Label(sidebar_status, text="Replies to approved customers" if transmit else "Listen-only · transmit off",
+              style="Sidebar.Caption.TLabel").pack(anchor="w")
 
     # ---- shared state ---------------------------------------------------------------------
     counters = tk.StringVar(value="0")
@@ -1253,8 +1256,9 @@ def main(argv=None):
     ttk.Button(settings_actions, text="Restore…", command=restore_from_backup).pack(side="left", padx=(t.px(SM), 0))
     refresh_storage()
     settings_card(right_settings, "Radio & network", (
-        ("Radio transmit", ("success", "On") if config.transmissions_enabled else ("neutral", "Off"),
-         "Vapor Board only listens to the mesh. Sending is not available yet."),
+        ("Radio transmit", ("warning", "On") if transmit else ("neutral", "Off"),
+         "Replies only to direct messages from approved customers, with rate limits. Never broadcasts." if transmit
+         else "Vapor Board only listens. Set transmissions_enabled in shop.json to reply to approved customers."),
         ("MQTT bridge", ("success", "On") if config.mqtt_enabled else ("neutral", "Off"),
          "No internet bridge. Nothing leaves your local network."),
     ))
@@ -1329,7 +1333,7 @@ def main(argv=None):
             (bool(selected_boards), "Create a board", "Boards hold notices like opening hours and closures.", "Go to Boards", lambda: (show_page("Boards"), board_entry.focus_set())),
             (has_posts[0], "Write your first post", "Posts appear on a board for staff to read.", "Write a post", new_post),
             (has_mail[0], "Send a private message", f"Messages are kept on this Mac for {mailbox}.", "Open Messages", new_message),
-            (display_state[0].tcp == ConnectionState.CONNECTED, "Connect a radio (optional)", "Listen in on your mesh. Nothing is transmitted.", None, None),
+            (display_state[0].tcp == ConnectionState.CONNECTED, "Connect a radio (optional)", "Answers approved customers' direct messages." if transmit else "Listen in on your mesh. Nothing is transmitted.", None, None),
         )
         if selected_boards and has_posts[0]:
             checklist.pack_forget()
@@ -1369,7 +1373,7 @@ def main(argv=None):
 
     on_show["Overview"] = refresh_overview
 
-    radio_card = theme.Card(lower, t, "Meshtastic radio", "Listen-only connection over Wi-Fi.").grid(row=0, column=1, sticky="nsew")
+    radio_card = theme.Card(lower, t, "Meshtastic radio", "Wi-Fi connection · replies on" if transmit else "Listen-only connection over Wi-Fi.").grid(row=0, column=1, sticky="nsew")
     radio_pill = theme.Pill(radio_card.actions, t, p.card, "neutral", "Not connected")
     radio_pill.label.pack()
     fields = ttk.Frame(radio_card.body, style="Card.TFrame")
@@ -1396,7 +1400,7 @@ def main(argv=None):
             notify("info", "The radio is off in demo mode", "Quit and open Vapor Board normally to connect a radio.")
             return
         try:
-            settings = TcpSettings(host=host_var.get().strip(), port=int(port_var.get()), timeout=3.0)
+            settings = TcpSettings(host=host_var.get().strip(), port=int(port_var.get()), timeout=3.0, transmissions_enabled=transmit)
         except (ValueError, TypeError) as exc:
             bad = port_entry if "port" in str(exc).lower() or not port_var.get().strip().isdigit() else host_entry
             bad.state(["invalid"])
@@ -1466,6 +1470,26 @@ def main(argv=None):
         if display_state[0].tcp == ConnectionState.CONNECTING and not t.reduce_motion and pulse_job[0] is None:
             pulse_job[0] = root.after(650, pulse, False)
 
+    replies = RadioReplies(database, config.shop_name, mailbox)
+
+    def answer_radio(message):
+        """Route a decoded packet: learn our node number, and answer approved customers when transmit is on."""
+        if message.get("variant") == "my_info" or transmit:
+            try:
+                outcome = replies.handle(message)
+            except DATA_ERRORS as exc:
+                notify("danger", "Radio message not handled", str(exc))
+                return
+            sent = sum(1 for text in outcome.replies if worker.send_text(message["from"], text, message.get("channel", 0)))
+            if outcome.note:
+                detail = outcome.note + (f" ({sent} of {len(outcome.replies)} replies sent)" if outcome.replies else "")
+                try:
+                    staff.log("radio", "radio message", detail)
+                except DATA_ERRORS:
+                    pass
+            if outcome.replies and "message to the shop" in outcome.note:
+                refresh_mail()
+
     def poll_radio():
         if not root.winfo_exists():
             return
@@ -1474,6 +1498,8 @@ def main(argv=None):
             if event is None:
                 break
             kind, data = event
+            if kind == "protobuf" and isinstance(data, dict):
+                answer_radio(data)
             before = display_state[0].tcp
             display_state[0] = reduce_event(display_state[0], event)
             counters.set(str(display_state[0].decoded))
