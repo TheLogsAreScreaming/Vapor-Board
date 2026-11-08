@@ -122,5 +122,77 @@ class StaffDirectoryTests(unittest.TestCase):
         self.assertEqual((len(entry["actor"]), len(entry["action"]), len(entry["detail"])), (40, 60, 200))
 
 
+class RecoveryCodeTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.clock = Clock()
+        self.path = Path(directory.name) / "staff.sqlite"
+        self.staff = StaffDirectory(self.path, clock=self.clock)
+        self.owner = self.staff.create("owner", "Sam", "correct horse", iterations=1000)
+        self.code = self.staff.new_recovery_code()
+        self.staff.save_recovery_code(self.code, self.owner, iterations=1000)
+
+    def recover(self, username="owner", code=None, password="brand new pass"):
+        return self.staff.recover(username, self.code if code is None else code, password, iterations=1000)
+
+    def test_a_new_code_is_not_stored_until_saved(self):
+        other = StaffDirectory(Path(self.path).with_name("other.sqlite"))
+        owner = other.create("owner", "Sam", "correct horse", iterations=1000)
+        other.new_recovery_code()
+        self.assertFalse(other.has_recovery_code())
+        other.save_recovery_code(other.new_recovery_code(), owner, iterations=1000)
+        self.assertTrue(other.has_recovery_code())
+
+    def test_code_is_stored_only_as_a_hash(self):
+        raw = self.path.read_bytes()
+        self.assertNotIn(self.code.encode(), raw)
+        self.assertNotIn(self.code.replace("-", "").encode(), raw)
+
+    def test_recovery_resets_the_password_and_uses_up_the_code(self):
+        self.assertEqual(self.recover().username, "owner")
+        self.assertIsNotNone(self.staff.authenticate("owner", "brand new pass"))
+        self.assertIsNone(self.staff.authenticate("owner", "correct horse"))
+        self.assertFalse(self.staff.has_recovery_code())
+        self.assertIsNone(self.recover(password="another password"))
+
+    def test_code_entry_is_forgiving(self):
+        typed = self.code.replace("-", " ").lower().replace("0", "o").replace("1", "l")
+        self.assertIsNotNone(self.recover(code=typed))
+
+    def test_wrong_code_or_username_is_refused(self):
+        self.assertIsNone(self.recover(code="AAAA-AAAA-AAAA-AAAA-AAAA"))
+        self.assertIsNone(self.recover(username="nobody"))
+        self.assertTrue(self.staff.has_recovery_code())
+
+    def test_staff_accounts_cannot_be_recovered(self):
+        self.staff.create("clerk", "Pat", "correct horse", role=STAFF, actor=self.owner, iterations=1000)
+        self.assertIsNone(self.recover(username="clerk"))
+
+    def test_only_admins_save_codes(self):
+        clerk = self.staff.create("clerk", "Pat", "correct horse", role=STAFF, actor=self.owner, iterations=1000)
+        with self.assertRaises(AccountError):
+            self.staff.save_recovery_code(self.staff.new_recovery_code(), clerk, iterations=1000)
+
+    def test_repeated_failures_pause_recovery_even_with_the_right_code(self):
+        for _ in range(MAX_FAILURES):
+            self.assertIsNone(self.recover(code="AAAA-AAAA-AAAA-AAAA-AAAA"))
+        with self.assertRaises(AccountError):
+            self.recover()
+        self.clock.now += 61
+        self.assertIsNotNone(self.recover())
+
+    def test_short_new_password_keeps_the_code(self):
+        with self.assertRaises(AccountError):
+            self.recover(password="short")
+        self.assertTrue(self.staff.has_recovery_code())
+
+    def test_old_code_stops_working_when_replaced(self):
+        new = self.staff.new_recovery_code()
+        self.staff.save_recovery_code(new, self.owner, iterations=1000)
+        self.assertIsNone(self.recover())
+        self.assertIsNotNone(self.recover(code=new))
+
+
 if __name__ == "__main__":
     unittest.main()

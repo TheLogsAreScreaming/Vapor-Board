@@ -1,12 +1,15 @@
 """Backup snapshots, verification and all-or-nothing restore (no window needed)."""
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
 from vapor_board import backup
+from vapor_board.accounts import StaffDirectory
 from vapor_board.bbs import BulletinBoard
 
 NOON = datetime(2026, 11, 7, 12, 0, 0)
+LATER = datetime(2026, 11, 7, 13, 0, 0)
 
 
 class BackupTests(unittest.TestCase):
@@ -94,6 +97,66 @@ class BackupTests(unittest.TestCase):
         fresh = self.root / "new" / "bbs.sqlite"
         self.assertIsNone(backup.restore_backup(saved.path, fresh, self.folder))
         self.assertEqual(BulletinBoard(fresh).list_boards(), [{"id": 1, "name": "General"}])
+
+
+class StaffBackupTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.database, self.folder, self.staff_path = self.root / "bbs.sqlite", self.root / "backups", self.root / "staff.sqlite"
+        BulletinBoard(self.database).create_board("General")
+        self.staff = StaffDirectory(self.staff_path)
+        self.owner = self.staff.create("owner", "Sam", "correct horse", iterations=1000)
+
+    def backup(self, now=NOON):
+        return backup.create_backup(self.database, self.folder, now=now, staff_database=self.staff_path)
+
+    def test_backup_saves_staff_privately_and_keeps_the_board_listing_clean(self):
+        info = self.backup()
+        sidecar = backup.staff_file(info.path)
+        self.assertEqual(sidecar.name, "bbs-20261107-120000.staff")
+        self.assertEqual(sidecar.stat().st_mode & 0o777, 0o600)
+        found = backup.staff_in_backup(info.path)
+        self.assertEqual((found.accounts, found.admins), (1, 1))
+        self.assertEqual([b.path for b in backup.list_backups(self.folder)], [info.path])
+
+    def test_backup_without_staff_has_nothing_to_restore(self):
+        info = backup.create_backup(self.database, self.folder, now=NOON)
+        self.assertIsNone(backup.staff_in_backup(info.path))
+        with self.assertRaises(backup.BackupError):
+            backup.restore_backup(info.path, self.database, self.folder, staff_database=self.staff_path, restore_staff=True)
+
+    def test_a_board_restore_leaves_accounts_alone(self):
+        info = self.backup()
+        self.staff.create("clerk", "Pat", "correct horse", actor=self.owner, iterations=1000)
+        backup.restore_backup(info.path, self.database, self.folder, now=LATER, staff_database=self.staff_path)
+        self.assertIsNotNone(self.staff.get("clerk"))
+
+    def test_restoring_staff_brings_accounts_back_and_keeps_a_safety_copy(self):
+        info = self.backup()
+        self.staff.create("clerk", "Pat", "correct horse", actor=self.owner, iterations=1000)
+        safety = backup.restore_backup(info.path, self.database, self.folder, now=LATER, staff_database=self.staff_path, restore_staff=True)
+        self.assertIsNone(self.staff.get("clerk"))
+        self.assertIsNotNone(self.staff.authenticate("owner", "correct horse"))
+        self.assertEqual(backup.staff_in_backup(safety.path).accounts, 2)
+
+    def test_a_backup_nobody_could_sign_in_to_is_refused(self):
+        info = self.backup()
+        with sqlite3.connect(backup.staff_file(info.path)) as db:
+            db.execute("UPDATE staff SET active = 0")
+        self.assertIsNone(backup.staff_in_backup(info.path))
+        with self.assertRaises(backup.BackupError):
+            backup.restore_backup(info.path, self.database, self.folder, now=LATER, staff_database=self.staff_path, restore_staff=True)
+        self.assertIsNotNone(self.staff.authenticate("owner", "correct horse"))
+
+    def test_a_damaged_staff_file_changes_nothing(self):
+        info = self.backup()
+        backup.staff_file(info.path).write_bytes(b"not a database, not even close" * 100)
+        self.assertIsNone(backup.staff_in_backup(info.path))
+        with self.assertRaises(backup.BackupError):
+            backup.restore_backup(info.path, self.database, self.folder, now=LATER, staff_database=self.staff_path, restore_staff=True)
+        self.assertEqual(self.staff.get("owner").username, "owner")
 
 
 if __name__ == "__main__":

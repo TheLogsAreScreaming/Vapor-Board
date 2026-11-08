@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+- **Owner recovery code:** shown once at set-up; *Forgot password?* on the sign-in screen resets an owner or admin password.
+- **Backups include staff accounts** and the activity log. Restoring them is a separate choice for owners and admins.
+
 ## 1.0.0 RC 1
 First release candidate.
 

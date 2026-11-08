@@ -21,6 +21,9 @@ MIN_PASSWORD = 8
 MAX_FAILURES = 5  # wrong passwords in a row before sign-in pauses
 LOCKOUT_SECONDS = 60
 _USERNAME = re.compile(r"^[a-z0-9][a-z0-9._-]{1,31}$")
+_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"  # no I, L, O or U: hard to misread
+CODE_LENGTH = 20  # 100 random bits
+_RECOVERY_KEY = "\0recovery"  # failure counter shared by all recovery attempts; can't be a username
 
 
 class AccountError(ValueError):
@@ -68,6 +71,9 @@ class StaffDirectory:
         db.execute("""CREATE TABLE IF NOT EXISTS activity (
             id INTEGER PRIMARY KEY, at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             actor TEXT NOT NULL, action TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '')""")
+        db.execute("""CREATE TABLE IF NOT EXISTS recovery (
+            id INTEGER PRIMARY KEY CHECK (id = 1), code_hash TEXT NOT NULL, salt TEXT NOT NULL,
+            iterations INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
         return db
 
     # ---- reading ---------------------------------------------------------------------------
@@ -201,6 +207,70 @@ class StaffDirectory:
             db.execute("UPDATE staff SET active = ? WHERE id = ?", (int(bool(active)), target.id))
         self.log(actor.username, "account enabled" if active else "account disabled", target.username)
         return self.get(target.username)
+
+    # ---- owner recovery code ---------------------------------------------------------------
+    @staticmethod
+    def new_recovery_code():
+        """A fresh code like ABCD-EFGH-JKMN-PQRS-TV01. Nothing is stored until save_recovery_code."""
+        raw = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(CODE_LENGTH))
+        return "-".join(raw[i:i + 4] for i in range(0, CODE_LENGTH, 4))
+
+    @staticmethod
+    def _normal_code(code):
+        """Upper case, no spaces or dashes, and the look-alike letters read as the digits they resemble."""
+        text = re.sub(r"[\s-]", "", str(code or "")).upper()
+        return text.translate(str.maketrans("OIL", "011"))
+
+    def has_recovery_code(self):
+        if not self.path.exists():
+            return False
+        with self._connect() as db:
+            return db.execute("SELECT COUNT(*) FROM recovery").fetchone()[0] > 0
+
+    def save_recovery_code(self, code, actor, iterations=None):
+        """Store a code's hash, replacing any earlier code. Owners and admins only."""
+        self._require_admin(actor)
+        normal = self._normal_code(code)
+        if len(normal) != CODE_LENGTH or set(normal) - set(_CODE_ALPHABET):
+            raise AccountError("That isn't a valid recovery code")
+        salt = secrets.token_bytes(16)
+        rounds = iterations or ITERATIONS
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO recovery (id, code_hash, salt, iterations) VALUES (1, ?, ?, ?)",
+                       (_hash(normal, salt, rounds), salt.hex(), rounds))
+        self.log(actor.username, "recovery code saved")
+
+    def recover(self, username, code, new_password, iterations=None):
+        """Reset an active owner/admin's password with the recovery code, which is then used up.
+
+        Returns the account, or None when the username or code is wrong. Repeated failures pause recovery.
+        """
+        count, last = self._failures.get(_RECOVERY_KEY, (0, 0.0))
+        if count >= MAX_FAILURES and self._clock() - last < LOCKOUT_SECONDS:
+            raise AccountError(f"Too many wrong attempts. Try again in {int(LOCKOUT_SECONDS - (self._clock() - last)) + 1} seconds")
+        new_password = self._password(new_password)
+        key = str(username or "").strip().lower()
+        if not self.path.exists():
+            return None
+        with self._connect() as db:
+            stored = db.execute("SELECT * FROM recovery").fetchone()
+            target = db.execute("SELECT * FROM staff WHERE username = ? AND role = ? AND active = 1", (key, ADMIN)).fetchone()
+        ok = bool(stored) and hmac.compare_digest(
+            _hash(self._normal_code(code), bytes.fromhex(stored["salt"]), stored["iterations"]), stored["code_hash"])
+        if not ok or target is None:
+            self._failures[_RECOVERY_KEY] = (count + 1 if count < MAX_FAILURES else 1, self._clock())
+            self.log(key[:40] or "unknown", "password recovery failed", "wrong username or recovery code")
+            return None
+        salt = secrets.token_bytes(16)
+        rounds = iterations or ITERATIONS
+        with self._connect() as db:  # one transaction: the code can't survive a successful reset
+            db.execute("UPDATE staff SET password_hash = ?, salt = ?, iterations = ?, last_sign_in = CURRENT_TIMESTAMP WHERE id = ?",
+                       (_hash(new_password, salt, rounds), salt.hex(), rounds, target["id"]))
+            db.execute("DELETE FROM recovery")
+        self._failures.pop(_RECOVERY_KEY, None)
+        self._failures.pop(key, None)
+        self.log(key, "password reset with recovery code")
+        return self.get(key)
 
     # ---- activity log ----------------------------------------------------------------------
     def log(self, actor, action, detail=""):
