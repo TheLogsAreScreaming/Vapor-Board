@@ -7,12 +7,15 @@ shop turned transmit on, and only to a single node.
 import secrets
 from .frame_reader import FramedTcpReader
 from .tcp import MeshtasticTcpClient, ConnectionState
+from .serial_link import MeshtasticSerialClient, SerialSettings
 from .meshwire import decode_from_radio, want_config, heartbeat, text_message
 
 
 class RadioSession:
     def __init__(self, settings=None, client=None, parser=None):
-        self.reader = FramedTcpReader(client if client is not None else MeshtasticTcpClient(settings))
+        if client is None:
+            client = MeshtasticSerialClient(settings) if isinstance(settings, SerialSettings) else MeshtasticTcpClient(settings)
+        self.reader = FramedTcpReader(client)
         self.parser = parser if parser is not None else decode_from_radio
         self.protocol_verified = False
         self.last_error = None

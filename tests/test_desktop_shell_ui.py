@@ -197,6 +197,30 @@ class DesktopShellUiTests(DesktopHarness):
 
         self.run_desktop(scenario, page="Settings", size="900x600")
 
+    def test_find_usb_radio_fills_the_address_and_connects_over_usb(self):
+        worker = mock.Mock()
+        worker.start.return_value = True
+        worker.poll.return_value = None
+
+        def scenario(root):
+            with mock.patch.object(desktop.serial_link, "list_ports", return_value=["/dev/cu.usbserial-7"]):
+                self.buttons(root, "Overview")["Find USB radio"].invoke()
+            self.buttons(root, "Overview")["Connect"].invoke()
+            self.assert_page_fits(root, "Overview")
+
+        with mock.patch.object(desktop, "RadioWorker", return_value=worker):
+            self.run_desktop(scenario, page="Overview", size="900x600")
+        settings = worker.start.call_args[0][0]
+        self.assertEqual((settings.path, settings.transmissions_enabled), ("/dev/cu.usbserial-7", False))
+
+    def test_no_usb_radio_says_so(self):
+        def scenario(root):
+            with mock.patch.object(desktop.serial_link, "list_ports", return_value=[]):
+                self.buttons(root, "Overview")["Find USB radio"].invoke()
+            self.assertTrue(self.toast(root).startswith("No USB radio found"))
+
+        self.run_desktop(scenario, page="Overview")
+
     def test_update_check_stays_off_unless_turned_on(self):
         with mock.patch.object(desktop.updates, "check") as check:
             self.run_desktop(lambda root: root.update(), page="Overview")

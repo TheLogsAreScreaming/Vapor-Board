@@ -29,7 +29,7 @@ A leading `/` is fine. Replies longer than 200 bytes are split into at most thre
 - Staff reply to customers in Messages as usual; customers fetch replies with `inbox`. Nothing is pushed to customers unasked.
 
 ## How the radio link works
-On connect Vapor Board sends the radio's network API a `want_config` request and, every five minutes, a `heartbeat`. These go to the radio over Wi-Fi only; nothing is sent on the air. Mesh transmission goes through one path (`RadioSession.send_text`), which refuses unless transmit is on and only sends to a single node.
+On connect Vapor Board sends the radio's network API a `want_config` request and, every five minutes, a `heartbeat`. These go only to the radio itself, over Wi-Fi or USB; nothing is sent on the air. Mesh transmission goes through one path (`RadioSession.send_text`), which refuses unless transmit is on and only sends to a single node.
 
 The Meshtastic messages are encoded and decoded by `vapor_board/meshwire.py` (no third-party packages). Tests check it against the official `meshtastic` bindings when those are installed.
 

@@ -14,7 +14,7 @@ Everything is stored on the Mac. Nothing goes to the internet, and the radio onl
 - **Kiosk.** A full-screen, read-only notice screen for the counter; leaving it needs a staff sign-in. → [docs/KIOSK.md](docs/KIOSK.md)
 - **Search** across posts and messages (⌘F). → [docs/SEARCH.md](docs/SEARCH.md)
 - **Backups and restore**, plus **CSV export** for spreadsheets. → [docs/BACKUP_RESTORE.md](docs/BACKUP_RESTORE.md)
-- **Meshtastic radio over Wi-Fi.** Listen-only by default. Opt-in replies to approved customers' direct messages, with rate limits and no broadcasts. → [docs/RADIO_REPLIES.md](docs/RADIO_REPLIES.md)
+- **Meshtastic radio over Wi-Fi or USB.** Listen-only by default. Opt-in replies to approved customers' direct messages, with rate limits and no broadcasts. → [docs/RADIO_REPLIES.md](docs/RADIO_REPLIES.md)
 - **Demo mode** with a sample shop: `open -a "Vapor Board" --args --demo`.
 - Light/dark appearance, larger text sizes, keyboard shortcuts (⌘1–6 pages, ⌘N new, ⌘F search, ⌘L lock).
 
