@@ -15,7 +15,7 @@ from .bbs import BulletinBoard
 from .customers import CustomerBook
 from .meshwire import TEXT_MESSAGE_APP, BROADCAST, node_id, split_text
 
-HELP = "Commands: boards · read N · more · msg <your message> · inbox · help"
+HELP = "Commands: boards · read N · more · info · msg <your message> · inbox · help"
 PAGE = 3  # posts per reply
 
 
@@ -28,10 +28,11 @@ class Outcome:
 
 
 class RadioReplies:
-    def __init__(self, database, shop_name, mailbox, clock=time.monotonic, per_customer=3, per_shop=12, window=60.0):
+    def __init__(self, database, shop_name, mailbox, clock=time.monotonic, per_customer=3, per_shop=12, window=60.0, hours="", contact=""):
         self.database = database
         self.shop_name = shop_name
         self.mailbox = mailbox
+        self.hours, self.contact = " ".join(hours.split()), " ".join(contact.split())
         self.clock = clock
         self.per_customer, self.per_shop, self.window = per_customer, per_shop, window
         self.my_node = None
@@ -82,6 +83,9 @@ class RadioReplies:
         bbs = BulletinBoard(self.database)
         if command in ("help", "menu", "?", ""):
             return f"{self.shop_name}. {HELP}", "sent help"
+        if command == "info":
+            details = [f"{label}: {text}" for label, text in (("Hours", self.hours), ("Contact", self.contact)) if text]
+            return f"{self.shop_name}. " + (" · ".join(details) if details else "No shop details set."), "sent shop info"
         if command == "boards":
             boards = bbs.customer_boards()
             if not boards:

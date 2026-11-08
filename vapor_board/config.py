@@ -36,6 +36,11 @@ class ShopConfig:
     kiosk_text_size: str = "large"
     # A sound, Mac notification and on-screen notice when a customer messages the shop.
     message_alerts: bool = True
+    # Shown on the kiosk and sent by the radio "info" command; leave empty to hide.
+    shop_hours: str = ""
+    shop_contact: str = ""
+    # Ask GitHub for newer releases at launch. Off by default: the app otherwise never contacts the internet.
+    check_for_updates: bool = False
 
     def __post_init__(self):
         if not isinstance(self.shop_name, str) or not (1 <= len(self.shop_name.strip()) <= 80):
@@ -44,7 +49,7 @@ class ShopConfig:
             raise ValueError("operator_name must contain 1–80 characters")
         if not isinstance(self.accent_color, str) or not _HEX.fullmatch(self.accent_color):
             raise ValueError("accent_color must be a six-digit hex color")
-        for key in ("notices_enabled", "transmissions_enabled", "mqtt_enabled", "customer_access_requires_approval", "kiosk_fullscreen", "message_alerts"):
+        for key in ("notices_enabled", "transmissions_enabled", "mqtt_enabled", "customer_access_requires_approval", "kiosk_fullscreen", "message_alerts", "check_for_updates"):
             if type(getattr(self, key)) is not bool:
                 raise ValueError(f"{key} must be a boolean")
         if type(self.minimum_customer_age) is not int or self.minimum_customer_age < 21:
@@ -62,6 +67,9 @@ class ShopConfig:
             raise ValueError("kiosk_logo must be a file path of at most 500 characters")
         if not isinstance(self.kiosk_tagline, str) or len(self.kiosk_tagline) > 120:
             raise ValueError("kiosk_tagline must be at most 120 characters")
+        for key in ("shop_hours", "shop_contact"):
+            if not isinstance(getattr(self, key), str) or len(getattr(self, key)) > 160:
+                raise ValueError(f"{key} must be at most 160 characters")
         if self.kiosk_text_size not in TEXT_SIZES:
             raise ValueError(f"kiosk_text_size must be one of: {', '.join(TEXT_SIZES)}")
 
