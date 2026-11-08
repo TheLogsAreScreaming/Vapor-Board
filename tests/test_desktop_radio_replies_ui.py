@@ -51,6 +51,30 @@ class DesktopRadioRepliesUiTests(DesktopHarness):
         latest = self.staff.activity()[0]
         self.assertEqual((latest["actor"], latest["detail"]), ("radio", "listed boards (1 of 1 replies sent)"))
 
+    def message_events(self):
+        return self.events()[:1] + [("protobuf", {"variant": "packet", "from": SAM, "to": ME, "channel": 0, "id": n, "portnum": 1,
+                                                  "text": "msg Open late?", "via_mqtt": False}) for n in (8, 9)]
+
+    def test_customer_message_alerts_staff_once_without_naming_them_in_the_banner(self):
+        self.write_shop({"transmissions_enabled": True, "shop_name": "Corner"})
+        worker = self.worker(self.message_events())
+
+        def scenario(root):
+            self.drain(root)
+            self.assertEqual(self.toast(root), "New customer message: From Sam. Open Messages to reply.")
+
+        with mock.patch.object(desktop, "RadioWorker", return_value=worker):
+            self.run_desktop(scenario, page="Overview")
+        self.banner.assert_called_once_with("Corner", "New customer message")
+
+    def test_alerts_can_be_turned_off(self):
+        self.write_shop({"transmissions_enabled": True, "message_alerts": False})
+        worker = self.worker(self.message_events())
+
+        with mock.patch.object(desktop, "RadioWorker", return_value=worker):
+            self.run_desktop(lambda root: self.drain(root), page="Overview")
+        self.banner.assert_not_called()
+
     def test_silent_when_transmit_is_off(self):
         worker = self.worker(self.events())
 

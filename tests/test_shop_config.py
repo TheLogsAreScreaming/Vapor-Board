@@ -48,6 +48,16 @@ class ShopConfigTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     ShopConfig(**kwargs)
 
+    def test_branding_and_alert_defaults(self):
+        config = ShopConfig()
+        self.assertEqual((config.kiosk_logo, config.kiosk_tagline, config.kiosk_text_size, config.message_alerts), ("", "", "large", True))
+
+    def test_branding_and_alert_settings_are_checked(self):
+        for kwargs in ({"kiosk_logo": 5}, {"kiosk_logo": "x" * 501}, {"kiosk_tagline": "x" * 121}, {"kiosk_text_size": "huge"}, {"message_alerts": "yes"}):
+            with self.subTest(kwargs):
+                with self.assertRaises(ValueError):
+                    ShopConfig(**kwargs)
+
     def test_older_settings_files_still_load(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "shop.json"

@@ -23,6 +23,7 @@ A leading `/` is fine. Replies longer than 200 bytes are split into at most thre
 - A packet heard twice is answered once.
 - Rate limits: 3 replies per customer and 12 for the whole shop per minute; extra messages get no reply.
 - Every handled message is in the Staff ▸ Activity log as `radio`.
+- When a customer sends `msg`, staff get a sound and a Mac notification (at most one per 30 seconds) and, when signed in, an on-screen notice. The Mac notification shows no name or message text. Set `message_alerts` to false in shop.json to turn this off. Alerts are local and never use the radio.
 - Staff reply to customers in Messages as usual; customers fetch replies with `inbox`. Nothing is pushed to customers unasked.
 
 ## How the radio link works

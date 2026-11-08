@@ -29,6 +29,13 @@ class ShopConfig:
     # Customer kiosk: fill the screen, and move to the next board after this many idle seconds (0 = never).
     kiosk_fullscreen: bool = True
     kiosk_rotate_seconds: int = 30
+    # Kiosk branding: an image file (PNG or GIF; relative paths are inside ~/.vapor-board), a line under the
+    # shop name, and how big notices are for reading from a distance.
+    kiosk_logo: str = ""
+    kiosk_tagline: str = ""
+    kiosk_text_size: str = "large"
+    # A sound, Mac notification and on-screen notice when a customer messages the shop.
+    message_alerts: bool = True
 
     def __post_init__(self):
         if not isinstance(self.shop_name, str) or not (1 <= len(self.shop_name.strip()) <= 80):
@@ -37,7 +44,7 @@ class ShopConfig:
             raise ValueError("operator_name must contain 1–80 characters")
         if not isinstance(self.accent_color, str) or not _HEX.fullmatch(self.accent_color):
             raise ValueError("accent_color must be a six-digit hex color")
-        for key in ("notices_enabled", "transmissions_enabled", "mqtt_enabled", "customer_access_requires_approval", "kiosk_fullscreen"):
+        for key in ("notices_enabled", "transmissions_enabled", "mqtt_enabled", "customer_access_requires_approval", "kiosk_fullscreen", "message_alerts"):
             if type(getattr(self, key)) is not bool:
                 raise ValueError(f"{key} must be a boolean")
         if type(self.minimum_customer_age) is not int or self.minimum_customer_age < 21:
@@ -50,6 +57,13 @@ class ShopConfig:
             raise ValueError("kiosk_rotate_seconds must be 0 or from 5 to 600")
         if self.text_size not in TEXT_SIZES:
             raise ValueError(f"text_size must be one of: {', '.join(TEXT_SIZES)}")
+
+        if not isinstance(self.kiosk_logo, str) or len(self.kiosk_logo) > 500:
+            raise ValueError("kiosk_logo must be a file path of at most 500 characters")
+        if not isinstance(self.kiosk_tagline, str) or len(self.kiosk_tagline) > 120:
+            raise ValueError("kiosk_tagline must be at most 120 characters")
+        if self.kiosk_text_size not in TEXT_SIZES:
+            raise ValueError(f"kiosk_text_size must be one of: {', '.join(TEXT_SIZES)}")
 
     def to_dict(self):
         return asdict(self)

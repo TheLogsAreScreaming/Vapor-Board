@@ -35,6 +35,7 @@ class DesktopHarness(unittest.TestCase):
         owner = self.staff.create(OWNER, "Operator", OWNER_PASSWORD, iterations=1000)
         self.staff.save_recovery_code(self.staff.new_recovery_code(), owner, iterations=1000)  # else sign-in asks for one
         self.sign_in_as = (OWNER, OWNER_PASSWORD)
+        self.banner = mock.Mock()  # stands in for the macOS notification
         self.argv = []  # command-line arguments for desktop.main (e.g. ["--demo"])
 
     def write_shop(self, settings):
@@ -61,6 +62,7 @@ class DesktopHarness(unittest.TestCase):
                 mock.patch.object(tk.Tk, "mainloop", mainloop), \
                 mock.patch.multiple(desktop.messagebox, showwarning=unexpected, showerror=unexpected,
                                     showinfo=unexpected, askyesno=unexpected), \
+                mock.patch.object(desktop.alerts, "show_banner", self.banner), \
                 mock.patch.object(desktop.filedialog, "askopenfilename", unexpected):
             desktop.main(self.argv)
 
