@@ -26,6 +26,9 @@ class ShopConfig:
     text_size: str = "standard"
     # Return to the sign-in screen after this many idle minutes; 0 never locks.
     auto_lock_minutes: int = 15
+    # Customer kiosk: fill the screen, and move to the next board after this many idle seconds (0 = never).
+    kiosk_fullscreen: bool = True
+    kiosk_rotate_seconds: int = 30
 
     def __post_init__(self):
         if not isinstance(self.shop_name, str) or not (1 <= len(self.shop_name.strip()) <= 80):
@@ -34,7 +37,7 @@ class ShopConfig:
             raise ValueError("operator_name must contain 1–80 characters")
         if not isinstance(self.accent_color, str) or not _HEX.fullmatch(self.accent_color):
             raise ValueError("accent_color must be a six-digit hex color")
-        for key in ("notices_enabled", "transmissions_enabled", "mqtt_enabled", "customer_access_requires_approval"):
+        for key in ("notices_enabled", "transmissions_enabled", "mqtt_enabled", "customer_access_requires_approval", "kiosk_fullscreen"):
             if type(getattr(self, key)) is not bool:
                 raise ValueError(f"{key} must be a boolean")
         if type(self.minimum_customer_age) is not int or self.minimum_customer_age < 21:
@@ -43,6 +46,8 @@ class ShopConfig:
             raise ValueError(f"appearance must be one of: {', '.join(APPEARANCES)}")
         if type(self.auto_lock_minutes) is not int or not 0 <= self.auto_lock_minutes <= 240:
             raise ValueError("auto_lock_minutes must be a whole number from 0 to 240")
+        if type(self.kiosk_rotate_seconds) is not int or not (self.kiosk_rotate_seconds == 0 or 5 <= self.kiosk_rotate_seconds <= 600):
+            raise ValueError("kiosk_rotate_seconds must be 0 or from 5 to 600")
         if self.text_size not in TEXT_SIZES:
             raise ValueError(f"text_size must be one of: {', '.join(TEXT_SIZES)}")
 

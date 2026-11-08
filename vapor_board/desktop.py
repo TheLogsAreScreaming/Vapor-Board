@@ -1617,6 +1617,9 @@ def main():
         gate_submit[0] = ttk.Button(gate_card.body, text="Create owner account" if first else "Sign in",
                                     style="Accent.TButton", command=create_owner if first else sign_in)
         gate_submit[0].pack(anchor="e", pady=(t.px(LG), 0))
+        if kiosk_on[0]:
+            ttk.Button(gate_card.body, text="Back to kiosk", style="Ghost.TButton",
+                       command=lambda: back_to_kiosk()).pack(anchor="e", pady=(t.px(SM), 0))
         last.bind("<Return>", lambda _e: (gate_submit[0].invoke(), "break")[1])
         gate.place(x=0, y=0, relwidth=1, relheight=1)
         gate.lift()
@@ -1629,6 +1632,9 @@ def main():
             author_name.set(account.display_name)
         new_author[0] = account.display_name
         gate.place_forget()
+        if kiosk_on[0]:
+            record("kiosk stopped")
+            stop_kiosk()
         last_activity[0] = time.monotonic()
         schedule_lock()
         show_page(current[0])
@@ -1690,6 +1696,132 @@ def main():
 
     root.bind_all("<KeyPress>", touched, add="+")
     root.bind_all("<ButtonPress>", touched, add="+")
+
+    # ==== Kiosk ============================================================================
+    # A read-only, customer-facing notice screen for a Mac on the shop counter. Starting it
+    # signs staff out; leaving it needs a staff sign-in. Only boards marked visible are shown.
+    kiosk = ttk.Frame(root, name="kiosk", padding=(t.px(36), t.px(28)))
+    kiosk_on = [False]
+    kiosk_boards, kiosk_job = [], [None]
+    kiosk_head = ttk.Frame(kiosk)
+    kiosk_head.pack(fill="x", pady=(0, t.px(LG)))
+    tk.Label(kiosk_head, text=config.shop_name.strip()[:1].upper(), bg=p.accent_fill, fg=p.on_accent,
+             font=t.fonts["monogram"], width=2, pady=t.px(4)).pack(side="left", anchor="n")
+    kiosk_names = ttk.Frame(kiosk_head)
+    kiosk_names.pack(side="left", fill="x", expand=True, padx=(t.px(MD), 0))
+    ttk.Label(kiosk_names, text=config.shop_name, style="Title.TLabel").pack(anchor="w")
+    ttk.Label(kiosk_names, text="Shop notices  ·  Touch a board to read it", style="Muted.TLabel").pack(anchor="w")
+    kiosk_staff = ttk.Button(kiosk_head, text="Staff sign-in", command=lambda: open_gate())
+    kiosk_staff.pack(side="right", anchor="n")
+    kiosk_body = ttk.Frame(kiosk)
+    kiosk_body.pack(fill="both", expand=True)
+    kiosk_body.columnconfigure(1, weight=1)
+    kiosk_body.rowconfigure(0, weight=1)
+    kiosk_list_card = theme.Card(kiosk_body, t, "Boards").grid(row=0, column=0, sticky="nsw", padx=(0, t.px(LG)))
+    kiosk_list = theme.ListView(kiosk_list_card.body, t, height=8, placeholder="No notices right now")
+    kiosk_list.frame.pack(fill="both", expand=True)
+    kiosk_list.tree.column("#0", width=t.px(200))
+    kiosk_read_card = theme.Card(kiosk_body, t, "").grid(row=0, column=1, sticky="nsew")
+    _holder, kiosk_text = theme.text_area(kiosk_read_card.body, t, height=6, readonly=True)
+    _holder.pack(fill="both", expand=True)
+    reading_font = (t.fonts["body"][0], t.fonts["headline"][1])
+    kiosk_text.configure(font=reading_font, padx=t.px(LG), pady=t.px(LG))
+    kiosk_text.tag_configure("meta", foreground=p.muted, font=t.fonts["small"])
+    kiosk_text.tag_configure("pinned", foreground=p.accent_text, font=t.fonts["body_bold"])
+
+    def kiosk_show(index):
+        if not 0 <= index < len(kiosk_boards):
+            return
+        board = kiosk_boards[index]
+        kiosk_read_card.title_var.set(board["name"])
+        kiosk_text.configure(state="normal")
+        kiosk_text.delete("1.0", "end")
+        try:
+            entries = BulletinBoard(database).list_posts(board["id"])
+        except DATA_ERRORS as exc:
+            entries = []
+            kiosk_text.insert("end", f"This board can't be shown right now ({exc}).", "placeholder")
+        for number, entry in enumerate(entries):
+            if number:
+                kiosk_text.insert("end", "\n\n")
+            if entry.get("pinned_at"):
+                kiosk_text.insert("end", "◆  Pinned\n", "pinned")
+            kiosk_text.insert("end", entry["body"])
+            kiosk_text.insert("end", f'\nPosted {friendly_time(entry["created_at"])}', "meta")
+        if not entries and not kiosk_text.get("1.0", "end-1c"):
+            kiosk_text.insert("end", "Nothing posted here yet.", "placeholder")
+        kiosk_text.configure(state="disabled")
+        kiosk_text.yview_moveto(0)
+
+    def kiosk_pick(index):
+        last_activity[0] = time.monotonic()
+        kiosk_show(index)
+
+    kiosk_list.on_select = kiosk_pick
+
+    def kiosk_rotate():
+        """Move to the next board after kiosk_rotate_seconds with nobody touching the screen."""
+        kiosk_job[0] = None
+        if not kiosk_on[0] or not config.kiosk_rotate_seconds:
+            return
+        if len(kiosk_boards) > 1 and session[0] is None and time.monotonic() - last_activity[0] >= config.kiosk_rotate_seconds:
+            index = ((kiosk_list.selected() or 0) + 1) % len(kiosk_boards)
+            kiosk_list.select(index)
+            kiosk_show(index)
+        kiosk_job[0] = root.after(config.kiosk_rotate_seconds * 1000, kiosk_rotate)
+
+    def start_kiosk():
+        nonlocal kiosk_boards
+        try:
+            kiosk_boards = BulletinBoard(database).customer_boards() if database.exists() else []
+        except DATA_ERRORS as exc:
+            notify("danger", "Kiosk not started", str(exc))
+            return
+        if not kiosk_boards:
+            notify("warning", "Nothing for customers to read",
+                   "Add a board, or mark one Visible on the Customers page, before starting the kiosk.")
+            return
+        record("kiosk started")
+        session[0] = None  # leaving the kiosk needs a staff sign-in
+        signed_in_name.set("")
+        if lock_job[0] is not None:
+            root.after_cancel(lock_job[0])
+            lock_job[0] = None
+        toast.hide()
+        kiosk_on[0] = True
+        kiosk_list.set_rows([(b["name"], ()) for b in kiosk_boards])
+        kiosk_list.select(0)
+        kiosk_show(0)
+        kiosk.place(x=0, y=0, relwidth=1, relheight=1)
+        kiosk.lift()
+        if config.kiosk_fullscreen:
+            try:
+                root.attributes("-fullscreen", True)
+            except tk.TclError:
+                pass
+        last_activity[0] = time.monotonic()
+        if config.kiosk_rotate_seconds:
+            kiosk_job[0] = root.after(config.kiosk_rotate_seconds * 1000, kiosk_rotate)
+
+    def stop_kiosk():
+        if not kiosk_on[0]:
+            return
+        kiosk_on[0] = False
+        if kiosk_job[0] is not None:
+            root.after_cancel(kiosk_job[0])
+            kiosk_job[0] = None
+        kiosk.place_forget()
+        if config.kiosk_fullscreen:
+            try:
+                root.attributes("-fullscreen", False)
+            except tk.TclError:
+                pass
+
+    def back_to_kiosk():
+        gate.place_forget()
+        last_activity[0] = time.monotonic()
+
+    ttk.Button(overview_actions, text="Start kiosk", command=start_kiosk).pack(side="left")
 
     def signed_in(handler):
         """Keyboard shortcuts do nothing while the sign-in screen is up."""
