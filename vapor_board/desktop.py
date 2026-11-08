@@ -23,6 +23,7 @@ from .ui_theme import XS, SM, MD, LG, XL
 from tkinter import messagebox, filedialog
 from . import backup as backups
 from . import accounts as staff_accounts
+from .customers import CustomerBook, CustomerError
 
 # Sidebar order, grouped so everyday work sits above shop administration.
 NAVIGATION = (
@@ -145,7 +146,7 @@ def main():
         "Overview": "What's happening at your shop, at a glance.",
         "Boards": "Notices and discussions for your shop. Stored on this Mac only.",
         "Messages": f"Private messages for {mailbox}. Kept on this Mac and never sent over the radio.",
-        "Customers": "Customer approvals and age verification.",
+        "Customers": "Approve customers after checking ID in person, and choose which boards they can read.",
         "Staff": "Who can sign in to this Mac, and what they have done.",
         "Settings": "How this copy of Vapor Board is set up.",
     }
@@ -738,17 +739,197 @@ def main():
     on_show["Messages"] = refresh_mail
 
     # ==== Customers ========================================================================
-    customers_card = theme.Card(customers_page, t).pack(fill="x")
-    theme.empty_state(customers_card.body, t, "◉", "Customer access isn't available yet",
-                      "Customer approvals and 21+ age verification switch on once staff sign-in is added. "
-                      "Until then, no customer can reach this board.").pack(fill="x")
-    planned = ttk.Frame(customers_card.body, style="Card.TFrame")
-    planned.pack(pady=(0, t.px(SM)))
-    ttk.Label(planned, text="PLANNED", style="Card.Section.TLabel").pack(anchor="w", pady=(0, t.px(XS)))
-    for line in ("Approve each customer before they can read or post",
-                 f"Confirm every customer is {config.minimum_customer_age} or older",
-                 "Choose which boards each customer can see"):
-        ttk.Label(planned, text=f"○   {line}", style="Card.Muted.TLabel").pack(anchor="w", pady=1)
+    # Customer records and the boards customers may read. Staff approve each customer only
+    # after checking a government ID in person; no ID details are stored.
+    customer_book = CustomerBook(database)
+    cust_body = ttk.Frame(customers_page)
+    cust_body.pack(fill="both", expand=True)
+    cust_body.columnconfigure(0, weight=3, uniform="customers")
+    cust_body.columnconfigure(1, weight=2, uniform="customers")
+    cust_body.rowconfigure(0, weight=1)
+    cust_card = theme.Card(cust_body, t).grid(row=0, column=0, sticky="nsew", padx=(0, t.px(LG)))
+    cust_tabs = ttk.Frame(cust_card.body, style="Card.TFrame")
+    cust_tabs.pack(fill="x")
+    cust_view = ["customers"]  # customers | boards
+    cust_list = theme.ListView(cust_card.body, t, height=6, placeholder="No customers yet — add one on the right")
+    cust_list.frame.pack(fill="both", expand=True, pady=(t.px(MD), 0))
+    cust_detail = tk.StringVar(value="")
+    ttk.Label(cust_card.body, textvariable=cust_detail, style="Card.Caption.TLabel", wraplength=t.px(330),
+              justify="left").pack(anchor="w", pady=(t.px(SM), 0))
+    cust_actions = ttk.Frame(cust_card.body, style="Card.TFrame")
+    cust_actions.pack(fill="x", pady=(t.px(SM), 0))
+    shown_customers, shown_visibility = [], []
+
+    def selected_customer():
+        index = cust_list.selected()
+        return shown_customers[index] if cust_view[0] == "customers" and index is not None and index < len(shown_customers) else None
+
+    def selected_visibility():
+        index = cust_list.selected()
+        return shown_visibility[index] if cust_view[0] == "boards" and index is not None and index < len(shown_visibility) else None
+
+    def update_customer_actions(_index=None):
+        customer = selected_customer()
+        if cust_view[0] == "customers":
+            for button in (approve_button, revoke_button, remove_button):
+                button.pack(side="left", padx=(0, t.px(SM)))
+            visibility_button.pack_forget()
+            approve_button.state(["!disabled"] if customer is not None and not customer.approved else ["disabled"])
+            revoke_button.state(["!disabled"] if customer is not None and customer.status != "revoked" else ["disabled"])
+            remove_button.state(["!disabled"] if customer is not None else ["disabled"])
+            if customer is None:
+                cust_detail.set("Select a customer to approve them or remove their access.")
+            else:
+                parts = [customer.status_label]
+                if customer.approved:
+                    parts.append(f"ID checked by {customer.verified_by} {friendly_time(customer.verified_at)}")
+                parts.append(f"Radio {customer.node_id}" if customer.node_id else "No radio node")
+                if customer.contact:
+                    parts.append(customer.contact)
+                cust_detail.set("  ·  ".join(parts))
+        else:
+            for button in (approve_button, revoke_button, remove_button):
+                button.pack_forget()
+            visibility_button.pack(side="left")
+            entry = selected_visibility()
+            visibility_button.state(["!disabled"] if entry is not None else ["disabled"])
+            visibility_button.configure(text="Hide from customers" if entry is None or entry[1] else "Show to customers")
+            cust_detail.set("Customers see only the boards marked Visible, in the kiosk and in radio replies. "
+                            "Staff always see every board.")
+
+    cust_list.on_select = update_customer_actions
+
+    def refresh_customers(keep=None):
+        nonlocal shown_customers, shown_visibility
+        for name, tab in cust_tab_buttons.items():
+            tab.configure(style="SegmentActive.TButton" if name == cust_view[0] else "Segment.TButton")
+        try:
+            if cust_view[0] == "customers":
+                shown_customers = customer_book.customers()
+                cust_list.set_rows([(f"{c.name}  ·  {c.status_label}" + (f"  ·  {c.node_id}" if c.node_id else ""),
+                                     ("strong",) if c.status == "pending" else ("placeholder",) if c.status == "revoked" else ())
+                                    for c in shown_customers], placeholder="No customers yet — add one on the right")
+                index = next((i for i, c in enumerate(shown_customers) if c.id == keep), None)
+            else:
+                bbs = BulletinBoard(database) if database.exists() else None
+                visible = bbs.board_visibility() if bbs else {}
+                shown_visibility = [(b, visible.get(b["id"], True)) for b in (bbs.list_boards() if bbs else [])]
+                cust_list.set_rows([(f"{'Visible' if shown else 'Staff only'}  ·  {b['name']}", () if shown else ("placeholder",))
+                                    for b, shown in shown_visibility], placeholder="No boards yet")
+                index = next((i for i, (b, _shown) in enumerate(shown_visibility) if b["id"] == keep), None)
+            if index is not None:
+                cust_list.select(index)
+        except DATA_ERRORS as exc:
+            cust_list.set_rows([], placeholder=f"Couldn't read customers: {exc}", tag="error")
+        update_customer_actions()
+
+    def switch_customer_view(view):
+        cust_view[0] = view
+        refresh_customers()
+
+    cust_tab_buttons = {}
+    for view, label in (("customers", "Customers"), ("boards", "Visible boards")):
+        tab = ttk.Button(cust_tabs, text=label, style="Segment.TButton", command=lambda v=view: switch_customer_view(v))
+        tab.pack(side="left", padx=(0, t.px(XS)))
+        cust_tab_buttons[view] = tab
+
+    def approve_customer():
+        customer = selected_customer()
+        if customer is None:
+            return
+        if not messagebox.askyesno(
+                f"Approve {customer.name}?",
+                f"Only approve after you have checked a government photo ID in person showing {customer.name} is "
+                f"{config.minimum_customer_age} or older.\n\nVapor Board records that you checked it, not the ID itself.",
+                icon="warning", default="no", parent=root):
+            return
+        try:
+            done = customer_book.approve(customer.id, session[0], id_checked_21_plus=True)
+        except (CustomerError, *DATA_ERRORS) as exc:
+            notify("danger", "Customer not approved", str(exc))
+            return
+        record("customer approved", f"{done.name} (ID checked in person)")
+        refresh_customers(keep=done.id)
+        notify("success", "Customer approved", f"{done.name} can now read the visible boards.")
+
+    def revoke_customer():
+        customer = selected_customer()
+        if customer is None:
+            return
+        try:
+            done = customer_book.revoke(customer.id, session[0])
+        except (CustomerError, *DATA_ERRORS) as exc:
+            notify("danger", "Access not removed", str(exc))
+            return
+        record("customer access removed", done.name)
+        refresh_customers(keep=done.id)
+        notify("success", "Access removed", f"{done.name} can no longer read the boards.")
+
+    def remove_customer():
+        customer = selected_customer()
+        if customer is None:
+            return
+        if not messagebox.askyesno(f"Delete {customer.name}?",
+                                   f"{customer.name}'s customer record is removed from this Mac. This can't be undone.",
+                                   icon="warning", default="no", parent=root):
+            return
+        try:
+            customer_book.remove(customer.id, session[0])
+        except (CustomerError, *DATA_ERRORS) as exc:
+            notify("danger", "Customer not deleted", str(exc))
+            return
+        record("customer deleted", customer.name)
+        refresh_customers()
+        notify("success", "Customer deleted")
+
+    def toggle_visibility():
+        entry = selected_visibility()
+        if entry is None:
+            return
+        board, shown = entry
+        try:
+            BulletinBoard(database).set_customer_visible(board["id"], not shown)
+        except DATA_ERRORS as exc:
+            notify("danger", "Board not changed", str(exc))
+            return
+        record("board shown to customers" if not shown else "board hidden from customers", board["name"])
+        refresh_customers(keep=board["id"])
+        notify("success", "Board visible to customers" if not shown else "Board is staff only",
+               f"Customers can read {board['name']}." if not shown else f"Customers no longer see {board['name']}.")
+
+    approve_button = ttk.Button(cust_actions, text="Approve…", style="Accent.TButton", command=approve_customer)
+    revoke_button = ttk.Button(cust_actions, text="Remove access", command=revoke_customer)
+    remove_button = ttk.Button(cust_actions, text="Delete", style="Danger.TButton", command=remove_customer)
+    visibility_button = ttk.Button(cust_actions, text="Hide from customers", command=toggle_visibility)
+
+    new_cust_card = theme.Card(cust_body, t, "Add a customer", "Approve them once you've checked their ID.").grid(row=0, column=1, sticky="new")
+    new_cust_card.subtitle.configure(wraplength=t.px(230))
+    new_cust = {name: tk.StringVar() for name in ("name", "contact", "node")}
+    cust_entries = {}
+    for label, name in (("NAME", "name"), ("PHONE OR EMAIL (OPTIONAL)", "contact"), ("RADIO NODE ID (OPTIONAL)", "node")):
+        ttk.Label(new_cust_card.body, text=label, style="Card.Field.TLabel").pack(anchor="w", pady=(0 if not cust_entries else t.px(SM), t.px(XS)))
+        cust_entries[name] = ttk.Entry(new_cust_card.body, name=f"customer_{name}", textvariable=new_cust[name], width=10)
+        cust_entries[name].pack(fill="x")
+    ttk.Label(new_cust_card.body, text="Like !a1b2c3d4. Needed only for radio replies.", style="Card.Caption.TLabel",
+              wraplength=t.px(230), justify="left").pack(anchor="w", pady=(t.px(XS), 0))
+
+    def add_customer(_event=None):
+        try:
+            made = customer_book.add(new_cust["name"].get(), new_cust["contact"].get(), new_cust["node"].get(), actor=session[0])
+        except (CustomerError, *DATA_ERRORS) as exc:
+            notify("danger", "Customer not added", str(exc))
+            return "break"
+        for variable in new_cust.values():
+            variable.set("")
+        record("customer added", made.name)
+        cust_view[0] = "customers"
+        refresh_customers(keep=made.id)
+        notify("success", "Customer added", f"{made.name} is waiting for approval.")
+        return "break"
+
+    ttk.Button(new_cust_card.body, text="Add customer", style="Accent.TButton", command=add_customer).pack(anchor="w", pady=(t.px(MD), 0))
+    cust_entries["node"].bind("<Return>", add_customer)
+    on_show["Customers"] = refresh_customers
 
     # ==== Staff ============================================================================
     # Accounts that may sign in on this Mac, plus the activity log. Only admins change accounts.
