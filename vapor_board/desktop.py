@@ -1150,25 +1150,22 @@ def main(argv=None):
     settings_body = ttk.Frame(settings_page)
     settings_body.pack(fill="both", expand=True)
     settings_body.columnconfigure(0, weight=1)
-    left_settings = ttk.Frame(settings_body)
-    left_settings.grid(row=0, column=0, sticky="nsew")
-    right_settings = ttk.Frame(settings_body)
-    right_settings.grid(row=0, column=0, sticky="nsew")
-    settings_tab_buttons = {}
+    settings_panes, settings_tab_buttons = {}, {}
 
     def show_settings_tab(name):
-        (right_settings if name == "shop" else left_settings).grid_remove()
-        (left_settings if name == "shop" else right_settings).grid()
-        for key, tab in settings_tab_buttons.items():
-            tab.configure(style="SegmentActive.TButton" if key == name else "Segment.TButton")
+        for key, pane in settings_panes.items():
+            pane.grid() if key == name else pane.grid_remove()
+            settings_tab_buttons[key].configure(style="SegmentActive.TButton" if key == name else "Segment.TButton")
 
-    for key, label in (("shop", "Shop & storage"), ("radio", "Radio & customers")):
+    for key, label in (("shop", "Shop"), ("storage", "Storage"), ("radio", "Radio"), ("customers", "Customer access")):
+        settings_panes[key] = ttk.Frame(settings_body)
+        settings_panes[key].grid(row=0, column=0, sticky="nsew")
         settings_tab_buttons[key] = ttk.Button(settings_tabs, text=label, style="Segment.TButton", command=lambda k=key: show_settings_tab(k))
         settings_tab_buttons[key].pack(side="left", padx=(0, t.px(XS)))
     show_settings_tab("radio" if config_error else "shop")  # a settings problem is reported on the radio tab
 
     if config_error:
-        problem = theme.Card(right_settings, t, "Settings file couldn't be read",
+        problem = theme.Card(settings_panes["radio"], t, "Settings file couldn't be read",
                              f"{config_error}. Vapor Board is using its default settings until shop.json is fixed.").pack(fill="x", pady=(0, t.px(LG)))
         problem.outer.configure(highlightbackground=p.warning)
         problem.subtitle.configure(wraplength=t.px(320))
@@ -1206,7 +1203,7 @@ def main(argv=None):
 
     appearance = {"system": f"Match macOS ({theme.resolve_appearance('system').title()})", "light": "Light", "dark": "Dark"}[config.appearance]
     readable_accent = p.accent_text
-    settings_card(left_settings, "Shop", (
+    settings_card(settings_panes["shop"], "Shop", (
         ("Shop name", config.shop_name, None),
         ("Operator mailbox", mailbox, "The name this Mac reads and sends private messages as."),
         ("Accent colour", ("swatch", config.accent_color.upper()), None),
@@ -1224,11 +1221,10 @@ def main(argv=None):
         last_backup.set(f"{short_path(database)}  ·  Last backup: {when}")
         backup_now.state(["!disabled"] if database.exists() else ["disabled"])
 
-    # Backup buttons live in the page header: the left column has no spare height at 900x600.
-    settings_card(left_settings, "Storage", (
+    settings_card(settings_panes["storage"], "Storage", (
         ("Settings file", "Found" if config_path.exists() else "Not created (defaults)", short_path(config_path)),
         ("Database", database_state, last_backup),
-    ), pady=(t.px(LG), 0))
+    ))
 
     def back_up_now():
         try:
@@ -1285,19 +1281,19 @@ def main(argv=None):
     backup_now.pack(side="left")
     ttk.Button(settings_actions, text="Restore…", command=restore_from_backup).pack(side="left", padx=(t.px(SM), 0))
     refresh_storage()
-    settings_card(right_settings, "Radio & network", (
+    settings_card(settings_panes["radio"], "Radio & network", (
         ("Radio transmit", ("warning", "On") if transmit else ("neutral", "Off"),
          "Replies only to direct messages from approved customers, with rate limits. Never broadcasts." if transmit
          else "Vapor Board only listens. Set transmissions_enabled in shop.json to reply to approved customers."),
         ("MQTT bridge", ("success", "On") if config.mqtt_enabled else ("neutral", "Off"),
          "No internet bridge. Nothing leaves your local network."),
     ))
-    settings_card(right_settings, "Customer access", (
+    settings_card(settings_panes["customers"], "Customer access", (
         ("Approval before joining", ("success", "Required") if config.customer_access_requires_approval else ("warning", "Not required"), None),
         ("Minimum age", f"{config.minimum_customer_age}+", None),
         ("Staff auto-lock", f"After {plural(config.auto_lock_minutes, 'minute')}" if config.auto_lock_minutes else "Off", None),
         ("New-message alerts", ("success", "On") if config.message_alerts else ("neutral", "Off"), None),
-    ), pady=(t.px(LG), 0))
+    ))
 
     def reveal_settings():
         target = config_path if config_path.exists() else config_path.parent

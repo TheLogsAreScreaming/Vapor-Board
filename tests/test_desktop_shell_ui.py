@@ -188,7 +188,7 @@ class DesktopShellUiTests(DesktopHarness):
             self.assertIn("Shop name", shown())
             self.assertNotIn("Radio transmit", shown())
             self.assert_page_fits(root, "Settings")
-            self.buttons(root, "Settings")["Radio & customers"].invoke()
+            self.buttons(root, "Settings")["Radio"].invoke()
             root.update()
             self.assertIn("Radio transmit", shown())
             self.assertNotIn("Shop name", shown())
