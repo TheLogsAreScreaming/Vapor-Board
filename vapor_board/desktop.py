@@ -25,6 +25,7 @@ from . import backup as backups
 from .export import export_csv
 from . import demo as demo_mode
 from .radio_replies import RadioReplies
+from . import VERSION_LABEL
 from . import accounts as staff_accounts
 from .customers import CustomerBook, CustomerError
 
@@ -1947,6 +1948,16 @@ def main(argv=None):
             file_menu.add_command(label=label, command=when_signed_in(command), accelerator=accelerator or "")
     menubar.add_cascade(label="File", menu=file_menu)
     root.configure(menu=menubar)
+
+    def show_about():
+        messagebox.showinfo("About Vapor Board",
+                            f"Vapor Board {VERSION_LABEL}\n\nA local bulletin board for one shop. "
+                            "Data stays on this Mac. Radio transmit is off unless you turn it on.", parent=root)
+
+    try:
+        root.createcommand("tk::mac::ShowAbout", show_about)  # macOS app menu ▸ About Vapor Board
+    except tk.TclError:
+        pass
 
     unread_count.trace_add("write", lambda *_: unread_note.set(
         "You're all caught up" if unread_count.get() == "0" else f"Waiting in the {mailbox} inbox"))
