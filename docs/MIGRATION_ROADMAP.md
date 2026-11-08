@@ -36,3 +36,12 @@
 5. Existing radio BBS commands remain testable without internet.
 6. Demo mode cannot connect to a live radio or broker.
 7. Packaging and tests run on Intel Mac.
+
+## Acceptance status (1.0.0 RC 1)
+1. Configure one shop without editing source: **done** (shop.json, documented in the README).
+2. Authorized staff post notices and moderate: **done** (staff sign-in; edit/delete/pin/schedule; customer messages arrive in the staff inbox).
+3. Customers view permitted notices without staff privileges: **done** (kiosk; radio replies for approved customers; Visible/Staff only boards).
+4. No automatic MQTT publish or radio transmission from announcements: **done** (no MQTT; radio only replies to direct requests, and only when turned on).
+5. Radio BBS commands testable without internet: **done** (simulated radio tests; codec checked against official bindings).
+6. Demo mode can't connect to a live radio or broker: **done** (`--demo`).
+7. Packaging and tests run on Intel Mac: **done in CI** (macos-15-intel). Real-Mac click-through and physical radio tests are still open.
