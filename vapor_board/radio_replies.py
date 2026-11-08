@@ -12,10 +12,10 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from .bbs import BulletinBoard
-from .customers import CustomerBook
+from .customers import CustomerBook, CustomerError
 from .meshwire import TEXT_MESSAGE_APP, BROADCAST, node_id, split_text
 
-HELP = "Commands: boards · read N · more · info · msg <your message> · inbox · help"
+HELP = "Commands: boards · read N · more · new · follow N · unfollow N · ask N <question> · info · msg <text> · inbox · help"
 PAGE = 3  # posts per reply
 
 
@@ -98,6 +98,28 @@ class RadioReplies:
             except (ValueError, IndexError):
                 return f"Send read and a board number from 1 to {len(boards)}." if boards else "No boards to read right now.", "read: bad board number"
             return self._page(customer, bbs, board, 0)
+        if command in ("follow", "unfollow"):
+            board = self._numbered(bbs, rest)
+            if board is None:
+                return f"Send {command} and a board number. Send boards to see them.", f"{command}: bad board number"
+            book = CustomerBook(self.database)
+            if command == "follow":
+                book.follow(customer.id, board["id"], [p["id"] for p in bbs.customer_posts(board["id"])])
+                return f"Following {board['name']}. Send new to check for new posts.", f"followed {board['name']}"
+            book.unfollow(customer.id, board["id"])
+            return f"Stopped following {board['name']}.", f"unfollowed {board['name']}"
+        if command == "new":
+            return self._new_posts(customer, bbs)
+        if command == "ask":
+            number, _space, question = rest.strip().partition(" ")
+            board = self._numbered(bbs, number)
+            if board is None or not question.strip():
+                return "Send ask, a board number and your question, e.g. ask 1 Are you open Sunday?", "ask: incomplete"
+            try:
+                CustomerBook(self.database).add_question(customer, board["id"], question)
+            except CustomerError as exc:
+                return str(exc), "ask: refused"
+            return f"Thanks. Staff will review your question before it appears on {board['name']}.", f"question to the shop for {board['name']}"
         if command == "more":
             board_id, offset = self._reading.get(customer.id, (None, 0))
             board = next((b for b in bbs.customer_boards() if b["id"] == board_id), None)  # it may have been hidden since
@@ -118,6 +140,32 @@ class RadioReplies:
                 bbs.mark_read(customer.name, message["id"])
             return " | ".join(f"{m['sender']}: {' '.join(m['body'].split())}" for m in unread), f"read {len(unread)} message(s)"
         return f"Unknown command. {HELP}", "unknown command"
+
+    @staticmethod
+    def _numbered(bbs, text):
+        """The visible board with this menu number, or None."""
+        boards = bbs.customer_boards()
+        try:
+            number = int(text.strip())
+        except ValueError:
+            return None
+        return boards[number - 1] if 1 <= number <= len(boards) else None
+
+    def _new_posts(self, customer, bbs):
+        """Unseen posts on followed boards, oldest first. Only sent when asked; nothing is pushed over the air."""
+        book = CustomerBook(self.database)
+        followed = book.followed_boards(customer.id)
+        boards = [b for b in bbs.customer_boards() if b["id"] in followed]
+        if not boards:
+            return "You aren't following any boards. Send follow and a board number.", "new: not following"
+        seen = book.seen_posts(customer.id)
+        fresh = sorted(((p, b) for b in boards for p in bbs.customer_posts(b["id"]) if p["id"] not in seen), key=lambda pair: pair[0]["id"])
+        if not fresh:
+            return "No new posts.", "checked new posts"
+        batch = fresh[:PAGE]
+        book.mark_seen(customer.id, [p["id"] for p, _b in batch])
+        body = " | ".join(f"{b['name']}: {' '.join(p['body'].split())}" for p, b in batch)
+        return body + (" (send new for more)" if len(fresh) > PAGE else ""), f"sent {len(batch)} new post(s)"
 
     def _page(self, customer, bbs, board, offset):
         """One page of a board's visible posts. The header says when there are more, so truncation can't hide that."""

@@ -9,7 +9,9 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from .bbs import BulletinBoard
 
+MAX_QUESTION, MAX_ANSWER, MAX_WAITING_PER_CUSTOMER, MAX_WAITING = 200, 1000, 3, 200
 PENDING, APPROVED, REVOKED = "pending", "approved", "revoked"
 STATUS_LABELS = {PENDING: "Waiting for approval", APPROVED: "Approved", REVOKED: "Access removed"}
 _NODE = re.compile(r"^!?([0-9a-f]{8})$")
@@ -50,6 +52,17 @@ def normalise_node(value):
     return "!" + match.group(1)
 
 
+@dataclass(frozen=True)
+class Question:
+    """A customer's question, held for staff. Nothing reaches a board until staff answer it."""
+    id: int
+    customer_id: int
+    customer_name: str
+    board_id: int
+    body: str
+    created_at: str
+
+
 class CustomerBook:
     def __init__(self, database_path):
         self.path = Path(database_path)
@@ -63,6 +76,11 @@ class CustomerBook:
             node_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending',
             verified_by TEXT NOT NULL DEFAULT '', verified_at TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS customer_questions (
+            id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL, customer_name TEXT NOT NULL, board_id INTEGER NOT NULL,
+            body TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+        db.execute("CREATE TABLE IF NOT EXISTS customer_follows (customer_id INTEGER NOT NULL, board_id INTEGER NOT NULL, PRIMARY KEY (customer_id, board_id))")
+        db.execute("CREATE TABLE IF NOT EXISTS customer_seen (customer_id INTEGER NOT NULL, post_id INTEGER NOT NULL, PRIMARY KEY (customer_id, post_id))")
         return db
 
     @staticmethod
@@ -149,3 +167,75 @@ class CustomerBook:
         with self._connect() as db:
             if db.execute("DELETE FROM customers WHERE id = ?", (customer_id,)).rowcount != 1:
                 raise CustomerError("Customer not found")
+            for table in ("customer_questions", "customer_follows", "customer_seen"):
+                db.execute(f"DELETE FROM {table} WHERE customer_id = ?", (customer_id,))
+
+    # ---- questions held for staff ---------------------------------------------------------
+    def add_question(self, customer, board_id, text):
+        """Hold a question for staff. It stays private until a staff member answers it."""
+        body = " ".join(str(text or "").split())
+        if not 1 <= len(body) <= MAX_QUESTION:
+            raise CustomerError(f"Keep questions to {MAX_QUESTION} characters")
+        with self._connect() as db:
+            if db.execute("SELECT COUNT(*) FROM customer_questions WHERE customer_id = ?", (customer.id,)).fetchone()[0] >= MAX_WAITING_PER_CUSTOMER:
+                raise CustomerError("You have questions waiting already. Staff will answer those first.")
+            if db.execute("SELECT COUNT(*) FROM customer_questions").fetchone()[0] >= MAX_WAITING:
+                raise CustomerError("The question list is full right now. Try again later.")
+            cursor = db.execute("INSERT INTO customer_questions (customer_id, customer_name, board_id, body) VALUES (?, ?, ?, ?)",
+                                (customer.id, customer.name, board_id, body))
+            return cursor.lastrowid
+
+    def questions(self):
+        """Questions waiting for staff, oldest first."""
+        if not self.path.exists():
+            return []
+        with self._connect() as db:
+            return [Question(r["id"], r["customer_id"], r["customer_name"], r["board_id"], r["body"], r["created_at"])
+                    for r in db.execute("SELECT * FROM customer_questions ORDER BY id")]
+
+    def answer_question(self, question_id, answer, author, actor):
+        """Post the question and answer on its board, without the customer's name, and drop it from the list."""
+        self._require_staff(actor)
+        answer = str(answer or "").strip()
+        if not 1 <= len(answer) <= MAX_ANSWER:
+            raise CustomerError(f"Enter an answer (1–{MAX_ANSWER} characters)")
+        question = next((q for q in self.questions() if q.id == question_id), None)
+        if question is None:
+            raise CustomerError("That question is no longer waiting")
+        try:
+            post_id = BulletinBoard(self.path).post(question.board_id, author, f"Q: {question.body}\nA: {answer}")
+        except (ValueError, sqlite3.IntegrityError) as exc:
+            raise CustomerError("That question's board no longer exists. Decline the question instead.") from exc
+        with self._connect() as db:
+            db.execute("DELETE FROM customer_questions WHERE id = ?", (question_id,))
+        return question, post_id
+
+    def decline_question(self, question_id, actor):
+        """Delete a question without posting anything."""
+        self._require_staff(actor)
+        with self._connect() as db:
+            if db.execute("DELETE FROM customer_questions WHERE id = ?", (question_id,)).rowcount != 1:
+                raise CustomerError("That question is no longer waiting")
+
+    # ---- boards a customer follows ---------------------------------------------------------
+    def follow(self, customer_id, board_id, current_post_ids=()):
+        """Follow a board. Posts already there count as seen, so `new` starts from now."""
+        with self._connect() as db:
+            db.execute("INSERT OR IGNORE INTO customer_follows VALUES (?, ?)", (customer_id, board_id))
+            db.executemany("INSERT OR IGNORE INTO customer_seen VALUES (?, ?)", [(customer_id, post) for post in current_post_ids])
+
+    def unfollow(self, customer_id, board_id):
+        with self._connect() as db:
+            return db.execute("DELETE FROM customer_follows WHERE customer_id = ? AND board_id = ?", (customer_id, board_id)).rowcount == 1
+
+    def followed_boards(self, customer_id):
+        with self._connect() as db:
+            return {row[0] for row in db.execute("SELECT board_id FROM customer_follows WHERE customer_id = ?", (customer_id,))}
+
+    def seen_posts(self, customer_id):
+        with self._connect() as db:
+            return {row[0] for row in db.execute("SELECT post_id FROM customer_seen WHERE customer_id = ?", (customer_id,))}
+
+    def mark_seen(self, customer_id, post_ids):
+        with self._connect() as db:
+            db.executemany("INSERT OR IGNORE INTO customer_seen VALUES (?, ?)", [(customer_id, post) for post in post_ids])

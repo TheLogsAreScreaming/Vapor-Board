@@ -23,7 +23,7 @@ from .bbs import BulletinBoard
 from .ui_format import friendly_time, radio_presentation, first_line, plural, parse_local_time, local_time_text, schedule_state
 from . import ui_theme as theme
 from .ui_theme import XS, SM, MD, LG, XL
-from tkinter import messagebox, filedialog
+from tkinter import messagebox, filedialog, simpledialog
 from . import alerts
 from . import updates
 from . import backup as backups
@@ -799,7 +799,7 @@ def main(argv=None):
     cust_card = theme.Card(cust_body, t).grid(row=0, column=0, sticky="nsew", padx=(0, t.px(LG)))
     cust_tabs = ttk.Frame(cust_card.body, style="Card.TFrame")
     cust_tabs.pack(fill="x")
-    cust_view = ["customers"]  # customers | boards
+    cust_view = ["customers"]  # customers | boards | questions
     cust_list = theme.ListView(cust_card.body, t, height=6, placeholder="No customers yet — add one on the right")
     cust_list.frame.pack(fill="both", expand=True, pady=(t.px(MD), 0))
     cust_detail = tk.StringVar(value="")
@@ -807,7 +807,7 @@ def main(argv=None):
               justify="left").pack(anchor="w", pady=(t.px(SM), 0))
     cust_actions = ttk.Frame(cust_card.body, style="Card.TFrame")
     cust_actions.pack(fill="x", pady=(t.px(SM), 0))
-    shown_customers, shown_visibility = [], []
+    shown_customers, shown_visibility, shown_questions = [], [], []
 
     def selected_customer():
         index = cust_list.selected()
@@ -817,9 +817,24 @@ def main(argv=None):
         index = cust_list.selected()
         return shown_visibility[index] if cust_view[0] == "boards" and index is not None and index < len(shown_visibility) else None
 
+    def selected_question():
+        index = cust_list.selected()
+        return shown_questions[index] if cust_view[0] == "questions" and index is not None and index < len(shown_questions) else None
+
     def update_customer_actions(_index=None):
         customer = selected_customer()
-        if cust_view[0] == "customers":
+        for button in (answer_button, decline_button):
+            button.pack_forget()
+        if cust_view[0] == "questions":
+            for button in (approve_button, revoke_button, remove_button, visibility_button):
+                button.pack_forget()
+            question = selected_question()
+            for button in (answer_button, decline_button):
+                button.pack(side="left", padx=(0, t.px(SM)))
+                button.state(["!disabled"] if question is not None else ["disabled"])
+            cust_detail.set(f"{question.customer_name} asked {friendly_time(question.created_at)}: {question.body}" if question is not None
+                            else "Questions stay private until you answer them. The answer is posted without the customer's name.")
+        elif cust_view[0] == "customers":
             for button in (approve_button, revoke_button, remove_button):
                 button.pack(side="left", padx=(0, t.px(SM)))
             visibility_button.pack_forget()
@@ -849,7 +864,7 @@ def main(argv=None):
     cust_list.on_select = update_customer_actions
 
     def refresh_customers(keep=None):
-        nonlocal shown_customers, shown_visibility
+        nonlocal shown_customers, shown_visibility, shown_questions
         for name, tab in cust_tab_buttons.items():
             tab.configure(style="SegmentActive.TButton" if name == cust_view[0] else "Segment.TButton")
         try:
@@ -859,6 +874,10 @@ def main(argv=None):
                                      ("strong",) if c.status == "pending" else ("placeholder",) if c.status == "revoked" else ())
                                     for c in shown_customers], placeholder="No customers yet — add one on the right")
                 index = next((i for i, c in enumerate(shown_customers) if c.id == keep), None)
+            elif cust_view[0] == "questions":
+                shown_questions = customer_book.questions()
+                cust_list.set_rows([(first_line(q.body, 60), ()) for q in shown_questions], placeholder="No questions waiting")
+                index = None
             else:
                 bbs = BulletinBoard(database) if database.exists() else None
                 visible = bbs.board_visibility() if bbs else {}
@@ -877,7 +896,7 @@ def main(argv=None):
         refresh_customers()
 
     cust_tab_buttons = {}
-    for view, label in (("customers", "Customers"), ("boards", "Visible boards")):
+    for view, label in (("customers", "Customers"), ("boards", "Visible boards"), ("questions", "Questions")):
         tab = ttk.Button(cust_tabs, text=label, style="Segment.TButton", command=lambda v=view: switch_customer_view(v))
         tab.pack(side="left", padx=(0, t.px(XS)))
         cust_tab_buttons[view] = tab
@@ -946,6 +965,37 @@ def main(argv=None):
         notify("success", "Board visible to customers" if not shown else "Board is staff only",
                f"Customers can read {board['name']}." if not shown else f"Customers no longer see {board['name']}.")
 
+    def answer_question():
+        question = selected_question()
+        if question is None:
+            return
+        answer = simpledialog.askstring("Answer question", f"{question.body}\n\nYour answer will be posted with the question, without the customer's name:", parent=root)
+        if answer is None:
+            return
+        try:
+            done, _post = customer_book.answer_question(question.id, answer, config.shop_name, session[0])
+        except (CustomerError, *DATA_ERRORS) as exc:
+            notify("danger", "Answer not posted", str(exc))
+            return
+        record("customer question answered", done.customer_name)
+        refresh_customers()
+        notify("success", "Answer posted")
+
+    def decline_question():
+        question = selected_question()
+        if question is None:
+            return
+        try:
+            customer_book.decline_question(question.id, session[0])
+        except (CustomerError, *DATA_ERRORS) as exc:
+            notify("danger", "Question not declined", str(exc))
+            return
+        record("customer question declined", question.customer_name)
+        refresh_customers()
+        notify("success", "Question declined", "Nothing was posted.")
+
+    answer_button = ttk.Button(cust_actions, text="Answer…", style="Accent.TButton", command=answer_question)
+    decline_button = ttk.Button(cust_actions, text="Decline", command=decline_question)
     approve_button = ttk.Button(cust_actions, text="Approve…", style="Accent.TButton", command=approve_customer)
     revoke_button = ttk.Button(cust_actions, text="Remove access", command=revoke_customer)
     remove_button = ttk.Button(cust_actions, text="Delete", style="Danger.TButton", command=remove_customer)
@@ -1548,7 +1598,7 @@ def main(argv=None):
                     staff.log("radio", "radio message", detail)
                 except DATA_ERRORS:
                     pass
-            if outcome.replies and "message to the shop" in outcome.note:
+            if outcome.replies and ("message to the shop" in outcome.note or "question to the shop" in outcome.note):
                 refresh_mail()
                 alert_new_message(outcome.customer)
 
