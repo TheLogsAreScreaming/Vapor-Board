@@ -56,6 +56,70 @@ class RadioRepliesTests(unittest.TestCase):
         self.assertEqual(self.ask("more").replies[0], "Store hours: note 1 | Open 10-8 today")
         self.assertEqual(self.ask("more").replies[0], "Send read and a board number first.")
 
+    def test_questions_wait_for_staff_and_post_without_the_name(self):
+        reply = self.ask("ask 1 Open Sunday?").replies[0]
+        self.assertIn("Staff will review", reply)
+        self.assertEqual(self.ask("read 1").replies[0], "Store hours: Open 10-8 today")
+        book = CustomerBook(self.db)
+        question = book.questions()[0]
+        self.assertEqual((question.customer_name, question.body), ("Sam", "Open Sunday?"))
+        book.answer_question(question.id, "Noon to 5", "Corner Shop", STAFF)
+        self.assertEqual(book.questions(), [])
+        text = self.ask("read 1").replies[0]
+        self.assertIn("Q: Open Sunday? A: Noon to 5", text)
+        self.assertNotIn("Sam", text)
+
+    def test_questions_are_limited_and_declining_posts_nothing(self):
+        for number in range(3):
+            self.assertIn("Staff will review", self.ask(f"ask 1 question {number}").replies[0])
+        self.assertIn("waiting already", self.ask("ask 1 one more").replies[0])
+        self.assertEqual(self.ask("ask 9 nope").note, "ask: incomplete")
+        self.assertEqual(self.ask("ask 1").note, "ask: incomplete")
+        book = CustomerBook(self.db)
+        book.decline_question(book.questions()[0].id, STAFF)
+        self.assertEqual(len(book.questions()), 2)
+        self.assertEqual(self.ask("read 1").replies[0], "Store hours: Open 10-8 today")
+
+    def test_answering_needs_staff(self):
+        self.ask("ask 1 hello?")
+        book = CustomerBook(self.db)
+        with self.assertRaises(Exception):
+            book.answer_question(book.questions()[0].id, "hi", "Shop", None)
+
+    def test_follow_shows_only_newer_posts_and_only_once(self):
+        self.assertIn("aren't following", self.ask("new").replies[0])
+        self.assertIn("Following Store hours", self.ask("follow 1").replies[0])
+        self.assertEqual(self.ask("new").replies[0], "No new posts.")
+        for number in range(1, 5):
+            self.bbs.post(self.hours, "Op", f"note {number}")
+        self.assertEqual(self.ask("new").replies[0], "Store hours: note 1 | Store hours: note 2 | Store hours: note 3 (send new for more)")
+        self.assertEqual(self.ask("new").replies[0], "Store hours: note 4")
+        self.assertEqual(self.ask("new").replies[0], "No new posts.")
+        self.ask("unfollow 1")
+        self.bbs.post(self.hours, "Op", "later")
+        self.assertIn("aren't following", self.ask("new").replies[0])
+
+    def test_new_skips_boards_hidden_since_following(self):
+        self.ask("follow 1")
+        self.bbs.post(self.hours, "Op", "secret now")
+        self.bbs.set_customer_visible(self.hours, False)
+        self.assertIn("aren't following", self.ask("new").replies[0])
+
+    def test_scheduled_post_counts_as_new_when_it_appears(self):
+        self.ask("follow 1")
+        hidden = self.bbs.customer_posts(self.hours)
+        self.assertEqual(len(hidden), 1)  # the 2099 post isn't marked seen
+        self.assertNotIn(2, CustomerBook(self.db).seen_posts(self.sam.id))
+
+    def test_deleting_a_customer_clears_their_questions_and_follows(self):
+        self.ask("ask 1 hello?")
+        self.ask("follow 1")
+        book = CustomerBook(self.db)
+        book.remove(self.sam.id, STAFF)
+        self.assertEqual(book.questions(), [])
+        self.assertEqual(book.followed_boards(self.sam.id), set())
+        self.assertEqual(book.seen_posts(self.sam.id), set())
+
     def test_info_sends_only_what_is_set(self):
         self.assertEqual(self.ask("info").replies[0], "Corner Shop. No shop details set.")
         self.router.hours, self.router.contact = "10-8 daily", ""

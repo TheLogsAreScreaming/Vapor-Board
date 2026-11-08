@@ -91,6 +91,47 @@ class DesktopCustomersUiTests(DesktopHarness):
         self.assertEqual(BulletinBoard(self.database).board_visibility()[notes], False)
 
 
+    def test_staff_answer_and_decline_questions(self):
+        from types import SimpleNamespace
+        from unittest import mock
+        from vapor_board import desktop
+        from vapor_board.bbs import BulletinBoard
+        from vapor_board.customers import CustomerBook
+
+        self.seed()
+        database = self.home / ".vapor-board" / "bbs.sqlite"
+        bbs = BulletinBoard(database)
+        board = bbs.list_boards()[0]["id"]
+        staff = SimpleNamespace(username="owner", active=True)
+        book = CustomerBook(database)
+        customer = book.add("Sam", actor=staff)
+        book.add_question(customer, board, "Open Sunday?")
+        book.add_question(customer, board, "Any deals?")
+
+        def scenario(root):
+            self.buttons(root, "Customers")["Questions"].invoke()
+            root.update()
+            questions = self.lists(root, "Customers")[0]
+            self.assertEqual(len(questions.get_children()), 2)
+            self.assert_page_fits(root, "Customers")
+            questions.selection_set("0")
+            root.update()
+            with mock.patch.object(desktop.simpledialog, "askstring", return_value="Noon to 5"):
+                self.buttons(root, "Customers")["Answer…"].invoke()
+            root.update()
+            questions.selection_set("0")
+            root.update()
+            self.buttons(root, "Customers")["Decline"].invoke()
+            root.update()
+            self.assertEqual(self.placeholder(questions), "No questions waiting")
+
+        self.run_desktop(scenario, page="Customers")
+        self.assertEqual(book.questions(), [])
+        bodies = [p["body"] for p in BulletinBoard(database).list_posts(board)]
+        self.assertIn("Q: Open Sunday?\nA: Noon to 5", bodies)
+        self.assertFalse(any("Any deals" in body for body in bodies))
+
+
 if __name__ == "__main__":
     import unittest
     unittest.main()

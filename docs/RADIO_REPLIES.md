@@ -13,6 +13,9 @@ Set `"transmissions_enabled": true` in `~/.vapor-board/shop.json` and restart. S
 | `read 2` | Up to three current posts from board 2 (scheduled/expired posts left out) |
 | `info` | The shop's hours and contact details, if set |
 | `more` | The next three older posts of the board being read |
+| `follow 2` / `unfollow 2` | Choose boards to follow |
+| `new` | Up to three unseen posts from followed boards. Only sent when asked |
+| `ask 2 Open Sunday?` | Holds a question for staff; see [Customers](CUSTOMERS.md) |
 | `msg Do you have size 10?` | Stores the message in the shop's Messages inbox from the customer's name |
 | `inbox` | Up to three unread staff replies to that customer, then marks them read |
 

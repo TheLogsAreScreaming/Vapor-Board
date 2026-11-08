@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- **Customer questions:** `ask` holds a question for staff, and the answer is posted without the customer's name.
+- **Following boards:** `follow`, `unfollow` and `new`. Replies only when asked, so no extra radio traffic.
 - Radio replies: `more` reads older posts on a board.
 
 ## 1.0.0 RC 2
