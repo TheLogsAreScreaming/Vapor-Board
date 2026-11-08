@@ -105,3 +105,54 @@ class ReceiveOnlyTcpClient:
 
     def __exit__(self, *_):
         self.disconnect()
+
+
+class MeshtasticTcpClient(ReceiveOnlyTcpClient):
+    """TCP link to a Meshtastic radio's network API.
+
+    send() stays refused. send_control() writes only the API's own control messages
+    (want_config, heartbeat), which talk to the radio over Wi-Fi and are never sent on the
+    air. transmit() writes a mesh packet and is refused unless settings.transmissions_enabled.
+    A quiet radio is normal: receive() returns None when nothing arrived before the timeout.
+    """
+    def __init__(self, settings=None, socket_factory=None):
+        super().__init__(settings, socket_factory)
+        self._write_lock = Lock()
+
+    def receive(self, size=4096):
+        sock = self._socket
+        if sock is None or self.state != ConnectionState.CONNECTED:
+            raise ConnectionError("TCP connection is not open")
+        try:
+            data = sock.recv(size)
+        except socket.timeout:
+            return None  # nothing yet; the link is still open
+        except OSError as exc:
+            self.last_error = str(exc)
+            self.disconnect()
+            self.state = ConnectionState.ERROR
+            raise ConnectionError("TCP receive failed") from exc
+        if not data:
+            self.disconnect()
+            return b""
+        return data
+
+    def _write(self, data):
+        sock = self._socket
+        if sock is None or self.state != ConnectionState.CONNECTED:
+            raise ConnectionError("TCP connection is not open")
+        with self._write_lock:
+            sock.sendall(data)
+
+    def send_control(self, frame):
+        from .meshwire import fields
+        payload = bytes(frame[4:])
+        numbers = {number for number, _wire, _value in fields(payload)}
+        if not numbers or not numbers <= {3, 7}:  # want_config_id, heartbeat
+            raise PermissionError("only API control messages may be sent without transmit enabled")
+        self._write(frame)
+
+    def transmit(self, frame):
+        if not self.settings.transmissions_enabled:
+            raise PermissionError("radio transmit is turned off (transmissions_enabled is false)")
+        self._write(frame)
