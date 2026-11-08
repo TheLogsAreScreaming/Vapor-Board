@@ -29,6 +29,9 @@ class BulletinBoard:
             db.execute("UPDATE boards SET position = id WHERE position IS NULL")
             if "pinned_at" not in self._columns(db, "posts"):
                 db.execute("ALTER TABLE posts ADD COLUMN pinned_at TEXT")
+            # Boards customers may read (kiosk, radio replies). Existing boards stay visible.
+            if "customer_visible" not in self._columns(db, "boards"):
+                db.execute("ALTER TABLE boards ADD COLUMN customer_visible INTEGER NOT NULL DEFAULT 1")
 
     @staticmethod
     def _columns(db, table):
@@ -50,6 +53,24 @@ class BulletinBoard:
         """Boards in the operator's chosen order (creation order until moved)."""
         with self._connect() as db:
             return [dict(row) for row in db.execute("SELECT id, name FROM boards ORDER BY position, id")]
+
+    def board_visibility(self):
+        """{board id: True when customers may read it}."""
+        with self._connect() as db:
+            return {row["id"]: bool(row["customer_visible"]) for row in db.execute("SELECT id, customer_visible FROM boards")}
+
+    def customer_boards(self):
+        """Boards customers may read, in board order. Staff-only boards are left out."""
+        with self._connect() as db:
+            return [dict(row) for row in db.execute(
+                "SELECT id, name FROM boards WHERE customer_visible = 1 ORDER BY position, id")]
+
+    def set_customer_visible(self, board_id, visible):
+        if type(board_id) is not int or board_id < 1:
+            raise ValueError("invalid board id")
+        with self._connect() as db:
+            if db.execute("UPDATE boards SET customer_visible = ? WHERE id = ?", (int(bool(visible)), board_id)).rowcount != 1:
+                raise ValueError("board not found")
 
     def move_board(self, board_id, offset):
         """Move a board one place up (-1) or down (+1). Returns False when it is already at that end."""
