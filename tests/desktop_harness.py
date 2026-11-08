@@ -32,7 +32,8 @@ class DesktopHarness(unittest.TestCase):
         self.staff_path = self.home / ".vapor-board" / "staff.sqlite"
         # Signed in as the owner by default; display name "Operator" matches the default mailbox.
         self.staff = StaffDirectory(self.staff_path)
-        self.staff.create(OWNER, "Operator", OWNER_PASSWORD, iterations=1000)
+        owner = self.staff.create(OWNER, "Operator", OWNER_PASSWORD, iterations=1000)
+        self.staff.save_recovery_code(self.staff.new_recovery_code(), owner, iterations=1000)  # else sign-in asks for one
         self.sign_in_as = (OWNER, OWNER_PASSWORD)
         self.argv = []  # command-line arguments for desktop.main (e.g. ["--demo"])
 

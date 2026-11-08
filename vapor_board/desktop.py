@@ -66,7 +66,7 @@ def main(argv=None):
     database = home / "bbs.sqlite"
     transmit = config.transmissions_enabled and not demo  # replies to approved customers' direct messages
     mailbox = config.operator_name.strip()
-    # Staff accounts sit in their own database so restoring a board backup never changes who can sign in.
+    # Staff accounts sit in their own database: restoring a backup changes them only if an admin chooses that.
     staff = staff_accounts.StaffDirectory(database.parent / "staff.sqlite")
     session = [None]  # the signed-in staff Account; None while the sign-in screen is up
 
@@ -977,6 +977,8 @@ def main(argv=None):
 
     # ==== Staff ============================================================================
     # Accounts that may sign in on this Mac, plus the activity log. Only admins change accounts.
+    new_code_button = ttk.Button(staff_actions, text="New recovery code…")
+    new_code_button.pack(side="left")
     staff_body = ttk.Frame(staff_page)
     staff_body.pack(fill="both", expand=True)
     staff_body.columnconfigure(0, weight=3, uniform="staff")
@@ -1127,7 +1129,7 @@ def main(argv=None):
 
     def show_staff():
         admin = session[0] is not None and session[0].is_admin
-        for widget in (*add_entries.values(), *role_buttons.values(), add_button):
+        for widget in (*add_entries.values(), *role_buttons.values(), add_button, new_code_button):
             widget.state(["!disabled"] if admin else ["disabled"])
         if admin:
             add_note.pack_forget()
@@ -1213,13 +1215,14 @@ def main(argv=None):
 
     def back_up_now():
         try:
-            made = backups.create_backup(database, backup_folder)
+            made = backups.create_backup(database, backup_folder, staff_database=staff.path)
         except backups.BackupError as exc:
             notify("danger", "Backup not made", str(exc))
             return
         refresh_storage()
         record("backup made", made.path.name)
-        notify("success", "Backup saved", f"{made.summary} copied to {short_path(made.path)}.")
+        extra = " Staff accounts included." if backups.staff_file(made.path).is_file() else ""
+        notify("success", "Backup saved", f"{made.summary} copied to {short_path(made.path)}.{extra}")
 
     def restore_from_backup():
         chosen = filedialog.askopenfilename(
@@ -1238,8 +1241,15 @@ def main(argv=None):
                 "Your current boards and messages are saved as a backup first, so you can undo this.",
                 icon="warning", default="no", parent=root):
             return
+        saved_staff = backups.staff_in_backup(chosen) if session[0] is not None and session[0].is_admin else None
+        restore_staff = saved_staff is not None and messagebox.askyesno(
+            "Restore staff accounts too?",
+            f"This backup also has {saved_staff.accounts} staff account{'' if saved_staff.accounts == 1 else 's'} and the activity log.\n\n"
+            "Restoring them replaces everyone's sign-in and passwords with the ones from the backup, and you'll need to sign in again. "
+            "Choose No to keep today's accounts.",
+            icon="warning", default="no", parent=root)
         try:
-            safety = backups.restore_backup(chosen, database, backup_folder)
+            safety = backups.restore_backup(chosen, database, backup_folder, staff_database=staff.path, restore_staff=restore_staff)
         except backups.BackupError as exc:
             notify("danger", "Restore failed", str(exc))
             return
@@ -1251,6 +1261,8 @@ def main(argv=None):
         record("backup restored", f"{info.path.name} ({info.summary})")
         notify("success", "Backup restored",
                f"{info.summary} restored." + (f" Previous data saved as {safety.path.name}." if safety else ""))
+        if restore_staff:
+            lock(reason="signed out after restoring staff accounts")
 
     backup_now = ttk.Button(settings_actions, text="Back up now", command=back_up_now)
     backup_now.pack(side="left")
@@ -1642,7 +1654,7 @@ def main(argv=None):
     gate = ttk.Frame(root, name="gate")
     gate_card = theme.Card(gate, t, padding=XL)
     gate_card.outer.place(relx=0.5, rely=0.5, anchor="center", width=t.px(400))
-    gate_vars = {name: tk.StringVar() for name in ("name", "username", "password", "confirm")}
+    gate_vars = {name: tk.StringVar() for name in ("name", "username", "password", "confirm", "code")}
     gate_error = [None]
     last_activity = [time.monotonic()]
     lock_job = [None]
@@ -1655,14 +1667,14 @@ def main(argv=None):
 
     def gate_problem(message):
         gate_error[0].configure(text=message)
-        gate_error[0].pack(anchor="w", pady=(t.px(MD), 0), before=gate_submit[0])
+        gate_error[0].pack(anchor="w", pady=(t.px(MD), 0), before=gate_submit[0].master)
 
     gate_submit = [None]
 
-    def open_gate():
-        """Show the owner set-up form on first launch, otherwise the sign-in form."""
+    def open_gate(recovering=False):
+        """Show the owner set-up form on first launch, otherwise the sign-in or password-recovery form."""
         try:
-            first = not staff.exists()
+            first = not recovering and not staff.exists()
         except DATA_ERRORS as exc:
             first = False
             notify("danger", "Staff accounts couldn't be read", str(exc))
@@ -1672,24 +1684,37 @@ def main(argv=None):
             variable.set("")
         tk.Label(gate_card.body, text=config.shop_name.strip()[:1].upper(), bg=p.accent_fill, fg=p.on_accent,
                  font=t.fonts["monogram"], width=2, pady=t.px(4)).pack(anchor="w")
-        ttk.Label(gate_card.body, text="Set up Vapor Board" if first else f"Sign in to {config.shop_name}",
+        ttk.Label(gate_card.body, text="Set up Vapor Board" if first else "Reset an owner password" if recovering else f"Sign in to {config.shop_name}",
                   style="Card.Headline.TLabel").pack(anchor="w", pady=(t.px(MD), 0))
         ttk.Label(gate_card.body, style="Card.Muted.TLabel", wraplength=t.px(330), justify="left",
                   text="Create the owner account. You can add staff afterwards on the Staff page." if first
+                  else "Enter an owner or admin username and the recovery code you saved." if recovering
                   else "Use your staff username and password.").pack(anchor="w", pady=(t.px(2), 0))
         if first:
             first_entry = gate_field("YOUR NAME", "name")
             gate_field("USERNAME", "username")
             gate_field("PASSWORD", "password", secret=True)
             last = gate_field("CONFIRM PASSWORD", "confirm", secret=True)
+        elif recovering:
+            first_entry = gate_field("USERNAME", "username")
+            gate_field("RECOVERY CODE", "code")
+            gate_field("NEW PASSWORD", "password", secret=True)
+            last = gate_field("CONFIRM NEW PASSWORD", "confirm", secret=True)
         else:
             first_entry = gate_field("USERNAME", "username")
             last = gate_field("PASSWORD", "password", secret=True)
         gate_error[0] = ttk.Label(gate_card.body, text="", style="Card.Danger.TLabel", wraplength=t.px(330), justify="left")
-        gate_submit[0] = ttk.Button(gate_card.body, text="Create owner account" if first else "Sign in",
-                                    style="Accent.TButton", command=create_owner if first else sign_in)
-        gate_submit[0].pack(anchor="e", pady=(t.px(LG), 0))
-        if kiosk_on[0]:
+        gate_row = ttk.Frame(gate_card.body, style="Card.TFrame")
+        gate_row.pack(fill="x", pady=(t.px(LG), 0))
+        gate_submit[0] = ttk.Button(gate_row, text="Create owner account" if first else "Reset and sign in" if recovering else "Sign in",
+                                    style="Accent.TButton", command=create_owner if first else recover_account if recovering else sign_in)
+        gate_submit[0].pack(side="right")
+        if recovering:
+            ttk.Button(gate_row, text="Back", style="Ghost.TButton", command=open_gate).pack(side="left")
+        elif not first:
+            ttk.Button(gate_row, text="Forgot password?", style="Ghost.TButton",
+                       command=lambda: open_gate(recovering=True)).pack(side="left")
+        if kiosk_on[0] and not recovering:
             ttk.Button(gate_card.body, text="Back to kiosk", style="Ghost.TButton",
                        command=lambda: back_to_kiosk()).pack(anchor="e", pady=(t.px(SM), 0))
         last.bind("<Return>", lambda _e: (gate_submit[0].invoke(), "break")[1])
@@ -1697,7 +1722,47 @@ def main(argv=None):
         gate.lift()
         first_entry.focus_set()
 
+    # ---- recovery code: shown once, and stored only after the owner says it has been saved ----
+    recovery_screen = ttk.Frame(root, name="recovery")
+    recovery_card = theme.Card(recovery_screen, t, padding=XL)
+    recovery_card.outer.place(relx=0.5, rely=0.5, anchor="center", width=t.px(420))
+    recovery_code = tk.StringVar()
+
+    def hide_recovery_code():
+        recovery_code.set("")
+        recovery_screen.place_forget()
+
+    def save_recovery_code():
+        try:
+            staff.save_recovery_code(recovery_code.get(), session[0])
+        except (staff_accounts.AccountError, *DATA_ERRORS) as exc:
+            notify("danger", "Recovery code not saved", str(exc))
+            return
+        hide_recovery_code()
+        notify("success", "Recovery code saved", "Keep it somewhere safe, away from this Mac.")
+
+    def show_recovery_code(replacing=False):
+        for child in recovery_card.body.winfo_children():
+            child.destroy()
+        recovery_code.set(staff.new_recovery_code())
+        ttk.Label(recovery_card.body, text="Save your recovery code", style="Card.Headline.TLabel").pack(anchor="w")
+        ttk.Label(recovery_card.body, style="Card.Muted.TLabel", wraplength=t.px(350), justify="left",
+                  text="If an owner password is ever forgotten, this code resets it. It's shown only now and works once. "
+                  "Write it down and keep it away from this Mac."
+                  + (" Your old code stops working when you save this one." if replacing else "")).pack(anchor="w", pady=(t.px(2), t.px(MD)))
+        ttk.Entry(recovery_card.body, name="recovery_code", textvariable=recovery_code, state="readonly", justify="center").pack(fill="x")
+        row = ttk.Frame(recovery_card.body, style="Card.TFrame")
+        row.pack(fill="x", pady=(t.px(LG), 0))
+        ttk.Button(row, text="I've saved it", style="Accent.TButton", command=save_recovery_code).pack(side="right")
+        if replacing:
+            ttk.Button(row, text="Keep current code", style="Ghost.TButton", command=hide_recovery_code).pack(side="left")
+        recovery_screen.place(x=0, y=0, relwidth=1, relheight=1)
+        recovery_screen.lift()
+
+    new_code_button.configure(command=lambda: show_recovery_code(replacing=True))
+
     def enter(account):
+        hide_recovery_code()
         session[0] = account
         signed_in_name.set(f"{account.display_name}  ·  {account.role_label}")
         if editing[0] is None:
@@ -1710,6 +1775,12 @@ def main(argv=None):
         last_activity[0] = time.monotonic()
         schedule_lock()
         show_page(current[0])
+        try:
+            needs_code = account.is_admin and not demo and not staff.has_recovery_code()
+        except DATA_ERRORS:
+            needs_code = False
+        if needs_code:
+            show_recovery_code()
 
     def create_owner():
         if gate_vars["password"].get() != gate_vars["confirm"].get():
@@ -1736,9 +1807,25 @@ def main(argv=None):
             return
         enter(account)
 
+    def recover_account():
+        if gate_vars["password"].get() != gate_vars["confirm"].get():
+            gate_problem("The passwords don't match.")
+            return
+        try:
+            account = staff.recover(gate_vars["username"].get(), gate_vars["code"].get(), gate_vars["password"].get())
+        except (staff_accounts.AccountError, *DATA_ERRORS) as exc:
+            gate_problem(f"{exc}.")
+            return
+        if account is None:
+            gate_problem("That username and recovery code don't match an active owner or admin.")
+            return
+        enter(account)  # the old code is used up, so this shows a new one
+        notify("success", "Password reset", "You're signed in with your new password.")
+
     def lock(_event=None, reason="signed out"):
         if session[0] is None:
             return "break"
+        hide_recovery_code()
         record(reason)
         session[0] = None
         signed_in_name.set("")
