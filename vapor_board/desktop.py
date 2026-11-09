@@ -1493,7 +1493,7 @@ def main(argv=None):
             done, title, detail, action, command = step
             row = ttk.Frame(checklist, style="Card.TFrame")
             row.pack(fill="x", pady=(0, t.px(6)))
-            tk.Label(row, text="✓" if done else "○", bg=p.card, fg=p.success if done else p.subtle,
+            tk.Label(row, text="✓" if done else "○", bg=p.card, fg=p.success if done else p.muted,
                      font=t.fonts["body_bold"], width=2).pack(side="left", anchor="n")
             words = ttk.Frame(row, style="Card.TFrame")
             words.pack(side="left", fill="x", expand=True)
@@ -2161,7 +2161,7 @@ def main(argv=None):
     footer = tk.Label(status_bar, text=StatusSnapshot().footer, bg=p.background, fg=p.muted,
                       font=t.fonts["caption"], padx=t.px(28), pady=t.px(7), anchor="w")
     footer.pack(side="left")
-    tk.Label(status_bar, text=f"{key}1–6 switch pages  ·  {key}N new  ·  {key}R refresh  ·  {key}L lock", bg=p.background, fg=p.subtle,
+    tk.Label(status_bar, text=f"{key}1–6 switch pages  ·  {key}N new  ·  {key}R refresh  ·  {key}L lock", bg=p.background, fg=p.muted,
              font=t.fonts["caption"], padx=t.px(28)).pack(side="right")
     page_host.pack(fill="both", expand=True)
 

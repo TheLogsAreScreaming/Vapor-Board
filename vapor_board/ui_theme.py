@@ -29,7 +29,7 @@ class Palette:
     border_strong: str
     text: str
     muted: str         # secondary text; at least 4.5:1 on card and background
-    subtle: str        # disabled text and placeholders
+    subtle: str        # disabled controls only; anything meant to be read uses muted
     success: str
     warning: str
     danger: str
@@ -204,7 +204,7 @@ def apply_theme(root, accent, appearance="system", text_size="standard"):
         for role, fg, font in (("", p.text, f["body"]), ("Muted.", p.muted, f["small"]),
                                ("Caption.", p.muted, f["caption"]), ("Field.", p.muted, f["label"]),
                                ("Strong.", p.text, f["body_bold"]), ("Headline.", p.text, f["headline"]),
-                               ("Section.", p.subtle if prefix == "Sidebar." else p.muted, f["section"]),
+                               ("Section.", p.muted, f["section"]),
                                ("Accent.", p.accent_text, f["body_bold"]), ("Danger.", readable(p.danger, bg), f["small"]),
                                ("Stat.", p.text, f["stat"]), ("Glyph.", p.muted, f["glyph"])):
             style.configure(f"{prefix}{role}TLabel", background=bg, foreground=fg, font=font)
@@ -343,7 +343,7 @@ class ListView:
         bar.grid(row=0, column=1, sticky="ns")
         self.tree.configure(yscrollcommand=_autohide(bar))
         self.tree.tag_configure("strong", font=t.fonts["body_bold"])
-        self.tree.tag_configure("placeholder", foreground=t.palette.subtle)
+        self.tree.tag_configure("placeholder", foreground=t.palette.muted)
         self.tree.tag_configure("error", foreground=readable(t.palette.danger, t.palette.field))
         self.tree.bind("<FocusIn>", lambda _e: self.frame.configure(highlightbackground=t.palette.accent_text))
         self.tree.bind("<FocusOut>", lambda _e: self.frame.configure(highlightbackground=t.palette.border_strong))
@@ -435,7 +435,7 @@ def text_area(parent, t, height=4, readonly=False):
         text.bind("<Shift-Tab>", lambda e: (e.widget.tk_focusPrev().focus_set(), "break")[1])
     text.tag_configure("author", foreground=p.text, font=t.fonts["body_bold"])
     text.tag_configure("meta", foreground=p.muted, font=t.fonts["caption"])
-    text.tag_configure("placeholder", foreground=p.subtle, font=t.fonts["body"])
+    text.tag_configure("placeholder", foreground=p.muted, font=t.fonts["body"])
     text.tag_configure("selected", background=blend(p.accent, p.field, 0.12))
     return holder, text
 
