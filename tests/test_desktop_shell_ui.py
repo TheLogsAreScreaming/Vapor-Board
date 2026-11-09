@@ -237,6 +237,39 @@ class DesktopShellUiTests(DesktopHarness):
         settings = worker.start.call_args[0][0]
         self.assertEqual((settings.path, settings.transmissions_enabled), ("/dev/cu.usbserial-7", False))
 
+    def test_meshcore_connects_listen_only_even_if_transmit_is_set(self):
+        self.write_shop({"radio_type": "meshcore", "transmissions_enabled": True})
+        worker = mock.Mock()
+        worker.start.return_value = True
+        worker.poll.return_value = None
+
+        def scenario(root):
+            self.assertIn("MeshCore radio", self.card_titles(root, self.page(root, "Overview")))
+            self.buttons(root, "Overview")["Connect"].invoke()
+            self.assert_page_fits(root, "Overview")
+
+        with mock.patch.object(desktop, "RadioWorker", return_value=worker):
+            self.run_desktop(scenario, page="Overview", size="900x600")
+        settings = worker.start.call_args[0][0]
+        self.assertIsInstance(settings, desktop.MeshCoreSettings)
+        self.assertEqual((settings.address, settings.port), ("127.0.0.1", 5000))
+
+    def test_mqtt_stays_off_unless_turned_on_and_shows_in_the_status_bar(self):
+        with mock.patch.object(desktop, "MqttMonitor") as monitor:
+            self.run_desktop(lambda root: root.update(), page="Overview")
+        monitor.assert_not_called()
+        self.write_shop({"mqtt_enabled": True, "mqtt_host": "broker.local"})
+        with mock.patch.object(desktop, "MqttMonitor") as monitor:
+            monitor.return_value.status.return_value.summary = "connected, 7 seen"
+
+            def scenario(root):
+                root.update()
+                self.assertTrue(any("connected, 7 seen" in str(w.cget("text")) for w in walk(root) if w.winfo_class() in ("Label", "TLabel")))
+
+            self.run_desktop(scenario, page="Overview")
+        monitor.assert_called_once_with("broker.local", 1883, "msh/#")
+        monitor.return_value.start.assert_called_once()
+
     def test_no_usb_radio_says_so(self):
         def scenario(root):
             with mock.patch.object(desktop.serial_link, "list_ports", return_value=[]):
