@@ -12,15 +12,15 @@ Everything is stored on the shop's Mac, in `~/.vapor-board`.
 | Who checked a customer's ID, and when | `bbs.sqlite` | *Delete* on the Customers page |
 | A customer's waiting questions, followed boards and read history | `bbs.sqlite` | *Delete* on the Customers page, or staff answering or declining the question |
 | Board posts, including answered questions (no customer name) | `bbs.sqlite` | Staff deleting the post |
-| Private messages between customers and staff | `bbs.sqlite` | **No way to delete them in the app yet** |
+| Private messages between customers and staff | `bbs.sqlite` | *Delete* on the Messages page, or deleting the customer |
 | Staff accounts and password hashes | `staff.sqlite` | Staff page |
-| Activity log, which can include customer names and radio node IDs | `staff.sqlite` | **No way to delete it in the app yet** |
+| Activity log, which can include customer names and radio node IDs | `staff.sqlite` | Admins can delete entries older than 90 days. Deleting a customer takes their name and radio ID out of it |
 
 Vapor Board does **not** store ID documents, photos or dates of birth. Staff check ID in person and the app records only that it was done.
 
 ## Retention
 
-Nothing is deleted automatically. Records stay until staff delete them, and the two items marked above stay indefinitely.
+Nothing is deleted automatically. Records stay until staff delete them.
 
 Backups are separate copies. Deleting a customer doesn't change backups already made, so restoring an older backup brings that customer back.
 
@@ -35,8 +35,8 @@ There are no analytics and no accounts with an outside service.
 
 ## If a customer asks to be forgotten
 
-1. Delete them on the Customers page. This also removes their questions, follows and read history.
-2. Their private messages and activity-log entries remain until the app can delete them. Tell the customer this, or remove those records by hand.
+1. Delete them on the Customers page. This also removes their messages, questions, follows and read history, and takes their name and radio ID out of the activity log.
+2. If the app says messages were kept because someone else has that name, delete that customer's conversations on the Messages page.
 3. Replace or delete older backups that still contain them, following the shop's own schedule.
 
 ## For the owner to decide
