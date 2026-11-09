@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- **Deleting data:** delete messages and conversations; deleting a customer also removes their messages and takes them out of the activity log; admins can delete activity older than 90 days.
 - **Customer questions:** `ask` holds a question for staff, and the answer is posted without the customer's name.
 - **Following boards:** `follow`, `unfollow` and `new`. Replies only when asked, so no extra radio traffic.
 

@@ -1,5 +1,7 @@
 """Drives the real Tk Messages page; skipped where no display is available."""
+from unittest import mock
 from desktop_harness import DesktopHarness, walk
+from vapor_board import desktop
 from vapor_board.bbs import BulletinBoard
 
 
@@ -30,6 +32,26 @@ class DesktopMessagesUiTests(DesktopHarness):
     def badge(root):
         badge = next(w for w in walk(root) if w.winfo_name() == "messages_badge")
         return badge.cget("text") if badge.winfo_manager() else None
+
+    def test_delete_a_conversation_and_a_message(self):
+        def scenario(root):
+            mail_list, _reader, _editor, _to = self.widgets(root)
+            self.pick(root, mail_list, 0)  # newest conversation: bob
+            with mock.patch.object(desktop.messagebox, "askyesno", return_value=False):
+                self.buttons(root, "Messages")["Delete"].invoke()
+            self.assertEqual(len(self.bbs.inbox("Operator")), 2)
+            with mock.patch.object(desktop.messagebox, "askyesno", return_value=True):
+                self.buttons(root, "Messages")["Delete"].invoke()
+            self.assertEqual([m["sender"] for m in self.bbs.inbox("Operator")], ["alice"])
+            self.open_inbox(root)
+            self.pick(root, mail_list, 0)
+            with mock.patch.object(desktop.messagebox, "askyesno", return_value=True):
+                self.buttons(root, "Messages")["Delete"].invoke()
+            self.assertEqual(self.bbs.inbox("Operator"), [])
+            self.assert_page_fits(root, "Messages")
+
+        self.run_desktop(scenario, page="Messages")
+        self.assertEqual(len(self.bbs.inbox("carol")), 1)  # someone else's mail is untouched
 
     def test_inbox_shows_only_the_operators_mail_and_marks_it_read(self):
         def scenario(root):

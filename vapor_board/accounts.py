@@ -278,6 +278,30 @@ class StaffDirectory:
             db.execute("INSERT INTO activity (actor, action, detail) VALUES (?, ?, ?)",
                        (str(actor)[:40], str(action)[:60], str(detail)[:200]))
 
+    def forget_in_activity(self, *names):
+        """Replace these names and radio IDs in the log with a marker, keeping what happened and when."""
+        terms = [re.escape(str(name)) for name in names if str(name or "").strip()]
+        if not terms or not self.path.exists():
+            return 0
+        pattern = re.compile(r"(?<![\w!])(?:" + "|".join(terms) + r")(?!\w)", re.IGNORECASE)
+        changed = 0
+        with self._connect() as db:
+            for row in db.execute("SELECT id, detail FROM activity").fetchall():
+                detail = pattern.sub("[deleted customer]", row["detail"])
+                if detail != row["detail"]:
+                    db.execute("UPDATE activity SET detail = ? WHERE id = ?", (detail, row["id"]))
+                    changed += 1
+        return changed
+
+    def clear_activity_older_than(self, days, actor):
+        """Admins only. Deletes old entries and records that it was done."""
+        if actor is None or not actor.active or not actor.is_admin:
+            raise AccountError("Only an owner or admin can delete the activity log")
+        with self._connect() as db:
+            removed = db.execute("DELETE FROM activity WHERE at < datetime('now', ?)", (f"-{int(days)} days",)).rowcount
+        self.log(actor.username, "activity log cleared", f"{removed} entries older than {int(days)} days")
+        return removed
+
     def activity(self, limit=100):
         if not self.path.exists():
             return []

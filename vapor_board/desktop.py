@@ -769,8 +769,34 @@ def main(argv=None):
         mail_composer.title_var.set(f"Reply to {sender}")
         mail_editor.focus_set()
 
+    def delete_message():
+        index = mail_list.selected()
+        if index is None or index >= len(shown_mail):
+            return
+        entry = shown_mail[index]
+        thread = mail_view[0] == "threads"
+        if not messagebox.askyesno("Delete this conversation?" if thread else "Delete this message?",
+                                   (f"Every message with {entry['other']} is removed from this Mac." if thread else "The message is removed from this Mac.")
+                                   + " This can't be undone, but older backups still contain it.",
+                                   icon="warning", default="no", parent=root):
+            return
+        try:
+            bbs = BulletinBoard(database)
+            if thread:
+                bbs.delete_conversation(mailbox, entry["other"])
+            else:
+                bbs.delete_mail(entry["id"])
+        except DATA_ERRORS as exc:
+            notify("danger", "Not deleted", str(exc))
+            return
+        record("conversation deleted" if thread else "message deleted")
+        refresh_mail()
+        show_in_reader()
+        notify("success", "Deleted")
+
     reply_button = ttk.Button(reader_card.actions, text="Reply", command=reply_to_message)
-    reply_button.pack()
+    reply_button.pack(side="left")
+    ttk.Button(reader_card.actions, text="Delete", style="Danger.TButton", command=delete_message).pack(side="left", padx=(t.px(SM), 0))
     mail_actions = ttk.Frame(mail_composer.body, style="Card.TFrame")
     mail_actions.pack(fill="x", pady=(t.px(MD), 0))
     ttk.Button(mail_actions, text="Send message", style="Accent.TButton", command=send_message).pack(side="right")
@@ -938,17 +964,20 @@ def main(argv=None):
         if customer is None:
             return
         if not messagebox.askyesno(f"Delete {customer.name}?",
-                                   f"{customer.name}'s customer record is removed from this Mac. This can't be undone.",
+                                   f"{customer.name}'s customer record, messages and questions are removed from this Mac, and their name "
+                                   "is taken out of the activity log. This can't be undone, but older backups still contain them.",
                                    icon="warning", default="no", parent=root):
             return
         try:
-            customer_book.remove(customer.id, session[0])
+            protected = [mailbox, *(name for a in staff.accounts() for name in (a.username, a.display_name))]
+            unique = customer_book.remove(customer.id, session[0], protected)
+            staff.forget_in_activity(*([customer.name] if unique else []), customer.node_id)
         except (CustomerError, *DATA_ERRORS) as exc:
             notify("danger", "Customer not deleted", str(exc))
             return
-        record("customer deleted", customer.name)
+        record("customer deleted")
         refresh_customers()
-        notify("success", "Customer deleted")
+        notify("success", "Customer deleted", "" if unique else f"Messages filed under {customer.name} were kept, because someone else has that name.")
 
     def toggle_visibility():
         entry = selected_visibility()
@@ -1087,6 +1116,7 @@ def main(argv=None):
                     team_list.select(index)
                 team_actions.pack(fill="x", pady=(t.px(MD), 0))
                 toggle_button.pack(side="right")
+                clear_activity_button.pack_forget()
             else:
                 entries = staff.activity(200)
                 team_list.set_rows([(f'{friendly_time(e["at"])}  ·  {e["actor"]}  ·  {e["action"]}'
@@ -1094,6 +1124,8 @@ def main(argv=None):
                                    placeholder="Nothing recorded yet")
                 team_actions.pack_forget()
                 toggle_button.pack_forget()
+                if session[0] is not None and session[0].is_admin:
+                    clear_activity_button.pack(side="right")
         except DATA_ERRORS as exc:
             team_list.set_rows([], placeholder=f"Couldn't read staff accounts: {exc}", tag="error")
         update_staff_actions()
@@ -1107,6 +1139,20 @@ def main(argv=None):
         tab = ttk.Button(team_tabs, text=label, style="Segment.TButton", command=lambda v=view: switch_team_view(v))
         tab.pack(side="left", padx=(0, t.px(XS)))
         team_tab_buttons[view] = tab
+
+    def clear_old_activity():
+        if not messagebox.askyesno("Delete old activity?", "Activity entries older than 90 days are removed from this Mac. This can't be undone.",
+                                   icon="warning", default="no", parent=root):
+            return
+        try:
+            removed = staff.clear_activity_older_than(90, session[0])
+        except (staff_accounts.AccountError, *DATA_ERRORS) as exc:
+            notify("danger", "Activity not deleted", str(exc))
+            return
+        refresh_staff()
+        notify("success", "Old activity deleted", f"{removed} entries removed.")
+
+    clear_activity_button = ttk.Button(team_tabs, text="Delete older than 90 days…", command=clear_old_activity)
 
     def toggle_account():
         account = selected_account()
