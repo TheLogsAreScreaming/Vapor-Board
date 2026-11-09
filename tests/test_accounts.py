@@ -194,5 +194,29 @@ class RecoveryCodeTests(unittest.TestCase):
         self.assertIsNotNone(self.recover(code=new))
 
 
+    def test_forget_in_activity_replaces_whole_names_and_node_ids(self):
+        self.staff.log("radio", "radio message", "no reply to Riley (waiting)")
+        self.staff.log("radio", "radio message", "no reply to unregistered radio !a1b2c3d4")
+        self.staff.log("radio", "radio message", "Rileyann asked")
+        self.assertEqual(self.staff.forget_in_activity("Riley", "!a1b2c3d4", ""), 2)
+        details = [e["detail"] for e in self.staff.activity(3)]
+        self.assertEqual(details, ["Rileyann asked", "no reply to unregistered radio [deleted customer]", "no reply to [deleted customer] (waiting)"])
+
+    def test_only_admins_clear_old_activity_and_recent_entries_stay(self):
+        owner = self.owner
+        helper = self.staff.create("helper", "Helper", "correct horse", role=STAFF, iterations=1000, actor=owner)
+        self.staff.log("x", "old")
+        self.staff.log("x", "recent")
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE activity SET at = datetime('now', '-91 days') WHERE action = 'old'")
+        with self.assertRaises(AccountError):
+            self.staff.clear_activity_older_than(90, helper)
+        self.assertEqual(self.staff.clear_activity_older_than(90, owner), 1)
+        actions = [e["action"] for e in self.staff.activity()]
+        self.assertIn("recent", actions)
+        self.assertNotIn("old", actions)
+        self.assertEqual(actions[0], "activity log cleared")
+
+
 if __name__ == "__main__":
     unittest.main()
