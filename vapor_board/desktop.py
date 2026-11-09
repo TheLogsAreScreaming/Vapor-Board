@@ -1678,10 +1678,6 @@ def main(argv=None):
             update_footer()
             root.after(2000, poll_mqtt)
 
-    if mqtt_monitor is not None:
-        mqtt_monitor.start()
-        poll_mqtt()
-
     def on_close():
         if mqtt_monitor is not None:
             mqtt_monitor.stop()
@@ -2273,6 +2269,9 @@ def main(argv=None):
     else:
         open_gate()
     root.after(100, poll_radio)
+    if mqtt_monitor is not None:
+        mqtt_monitor.start()
+        poll_mqtt()
     if config.check_for_updates and not demo:
         check_updates()
     root.mainloop()
