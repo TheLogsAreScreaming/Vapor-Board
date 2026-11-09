@@ -2,14 +2,14 @@
 import time
 from queue import Queue, Empty
 from threading import Event, Lock, Thread
-from .radio_session import RadioSession
+from .meshcore_link import make_session
 from .tcp import ConnectionState
 
 class RadioWorker:
     HEARTBEAT_SECONDS = 300  # the radio closes idle API sessions after about 15 minutes
 
     def __init__(self, session_factory=None):
-        self.session_factory = session_factory or RadioSession
+        self.session_factory = session_factory or make_session
         self.events = Queue()
         self._lock = Lock()
         self._stop = Event()

@@ -30,6 +30,8 @@ from . import backup as backups
 from .export import export_csv
 from . import demo as demo_mode
 from .radio_replies import RadioReplies
+from .meshcore_link import MeshCoreSettings
+from .mqtt_status import MqttMonitor
 from . import VERSION_LABEL
 from . import accounts as staff_accounts
 from .customers import CustomerBook, CustomerError
@@ -69,7 +71,8 @@ def main(argv=None):
         config_path = home / "shop.json"
         config, config_error = read_config(config_path)
     database = home / "bbs.sqlite"
-    transmit = config.transmissions_enabled and not demo  # replies to approved customers' direct messages
+    meshcore = config.radio_type == "meshcore"  # listen-only: never replies
+    transmit = config.transmissions_enabled and not demo and not meshcore  # replies to approved customers' direct messages
     mailbox = config.operator_name.strip()
     # Staff accounts sit in their own database: restoring a backup changes them only if an admin chooses that.
     staff = staff_accounts.StaffDirectory(database.parent / "staff.sqlite")
@@ -1390,8 +1393,10 @@ def main(argv=None):
         ("Radio transmit", ("warning", "On") if transmit else ("neutral", "Off"),
          "Replies only to direct messages from approved customers, with rate limits. Never broadcasts." if transmit
          else "Vapor Board only listens. Set transmissions_enabled in shop.json to reply to approved customers."),
-        ("MQTT bridge", ("success", "On") if config.mqtt_enabled else ("neutral", "Off"),
-         "No internet bridge. Nothing leaves your local network."),
+        ("Radio type", "MeshCore (listen-only)" if meshcore else "Meshtastic", "Set radio_type in shop.json."),
+        ("MQTT status", ("success", "On") if config.mqtt_enabled and config.mqtt_host else ("neutral", "Off"),
+         "Counts messages from a broker on your network, shown in the status bar. It never publishes." if config.mqtt_enabled and config.mqtt_host
+         else "No MQTT connection. Set mqtt_enabled and mqtt_host in shop.json to count messages from a local broker."),
     ))
     settings_card(settings_panes["customers"], "Customer access", (
         ("Approval before joining", ("success", "Required") if config.customer_access_requires_approval else ("warning", "Not required"), None),
@@ -1417,6 +1422,7 @@ def main(argv=None):
     # Radio connections are explicit and receive-only.
     radio_page = overview_page
     worker = RadioWorker()
+    mqtt_monitor = MqttMonitor(config.mqtt_host, config.mqtt_port, config.mqtt_topic) if config.mqtt_enabled and config.mqtt_host and not demo else None
     stats = ttk.Frame(radio_page)
     stats.pack(fill="x", pady=(0, t.px(LG)))
     for column in range(3):
@@ -1507,21 +1513,21 @@ def main(argv=None):
 
     on_show["Overview"] = refresh_overview
 
-    radio_card = theme.Card(lower, t, "Meshtastic radio", "Wi-Fi or USB · replies on" if transmit else "Listen-only connection over Wi-Fi or USB.").grid(row=0, column=1, sticky="nsew")
+    radio_card = theme.Card(lower, t, "MeshCore radio" if meshcore else "Meshtastic radio", "Wi-Fi or USB · replies on" if transmit else "Listen-only connection over Wi-Fi or USB.").grid(row=0, column=1, sticky="nsew")
     radio_pill = theme.Pill(radio_card.actions, t, p.card, "neutral", "Not connected")
     radio_pill.label.pack()
     fields = ttk.Frame(radio_card.body, style="Card.TFrame")
     fields.pack(fill="x")
     fields.columnconfigure(0, weight=1)
     host_var = tk.StringVar(value="127.0.0.1")
-    port_var = tk.StringVar(value="4403")
+    port_var = tk.StringVar(value="5000" if meshcore else "4403")
     host_box = ttk.Frame(fields, style="Card.TFrame")
     host_box.grid(row=0, column=0, sticky="ew")
     port_box = ttk.Frame(fields, style="Card.TFrame")
     port_box.grid(row=0, column=1, sticky="ew", padx=(t.px(MD), 0))
     host_entry, _note = theme.field(host_box, t, "RADIO ADDRESS", host_var)
     port_entry, _note = theme.field(port_box, t, "PORT", port_var, width=6)
-    ttk.Label(radio_card.body, text="IP address or USB device. The port is usually 4403.",
+    ttk.Label(radio_card.body, text=f"IP address or USB device. The port is usually {port_var.get()}.",
               style="Card.Caption.TLabel", wraplength=t.px(330), justify="left").pack(anchor="w", pady=(t.px(6), 0))
 
     def find_usb_radio():
@@ -1545,7 +1551,8 @@ def main(argv=None):
             return
         try:
             address = host_var.get().strip()
-            settings = (serial_link.SerialSettings(path=address, transmissions_enabled=transmit) if address.startswith("/dev/")
+            settings = (MeshCoreSettings(address=address, port=int(port_var.get()) if not address.startswith("/dev/") else 5000) if meshcore
+                        else serial_link.SerialSettings(path=address, transmissions_enabled=transmit) if address.startswith("/dev/")
                         else TcpSettings(host=address, port=int(port_var.get()), timeout=3.0, transmissions_enabled=transmit))
         except (ValueError, TypeError) as exc:
             bad = port_entry if "port" in str(exc).lower() or not port_var.get().strip().isdigit() else host_entry
@@ -1599,8 +1606,8 @@ def main(argv=None):
         pulse_job[0] = root.after(650, pulse, not bright)
 
     def update_footer():
-        snapshot = StatusSnapshot(tcp_state=display_state[0].tcp, protocol_verified=display_state[0].protocol_verified)
-        footer.configure(text=snapshot.footer)
+        snapshot = StatusSnapshot(tcp_state=display_state[0].tcp, protocol_verified=display_state[0].protocol_verified, mqtt_enabled=mqtt_monitor is not None)
+        footer.configure(text=snapshot.footer + (f" ({mqtt_monitor.status().summary})" if mqtt_monitor is not None else ""))
         kind, label, explanation = radio_presentation(display_state[0])
         radio_pill.set(kind, label)
         sidebar_pill.set(kind, label)
@@ -1666,7 +1673,14 @@ def main(argv=None):
                 notify("danger", "Radio connection problem", display_state[0].detail)
         root.after(100, poll_radio)
 
+    def poll_mqtt():
+        if root.winfo_exists():
+            update_footer()
+            root.after(2000, poll_mqtt)
+
     def on_close():
+        if mqtt_monitor is not None:
+            mqtt_monitor.stop()
         worker.stop()
         root.destroy()
 
@@ -2255,6 +2269,9 @@ def main(argv=None):
     else:
         open_gate()
     root.after(100, poll_radio)
+    if mqtt_monitor is not None:
+        mqtt_monitor.start()
+        poll_mqtt()
     if config.check_for_updates and not demo:
         check_updates()
     root.mainloop()

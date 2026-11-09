@@ -8,6 +8,7 @@ import re
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 APPEARANCES = ("system", "light", "dark")
 TEXT_SIZES = ("standard", "large", "larger")
+RADIO_TYPES = ("meshtastic", "meshcore")
 
 
 @dataclass(frozen=True)
@@ -18,7 +19,13 @@ class ShopConfig:
     accent_color: str = "#238C9C"
     notices_enabled: bool = True
     transmissions_enabled: bool = False
+    # Receive-only status from a broker on the shop's network. It counts messages; it never publishes.
     mqtt_enabled: bool = False
+    mqtt_host: str = ""
+    mqtt_port: int = 1883
+    mqtt_topic: str = "msh/#"
+    # meshtastic, or meshcore (listen-only: no replies).
+    radio_type: str = "meshtastic"
     customer_access_requires_approval: bool = True
     minimum_customer_age: int = 21
     # Desktop look: "system" follows macOS light/dark; text_size scales every font.
@@ -70,6 +77,14 @@ class ShopConfig:
         for key in ("shop_hours", "shop_contact"):
             if not isinstance(getattr(self, key), str) or len(getattr(self, key)) > 160:
                 raise ValueError(f"{key} must be at most 160 characters")
+        if not isinstance(self.mqtt_host, str) or len(self.mqtt_host) > 200 or any(c.isspace() for c in self.mqtt_host):
+            raise ValueError("mqtt_host must be a host name or address")
+        if type(self.mqtt_port) is not int or not 1 <= self.mqtt_port <= 65535:
+            raise ValueError("mqtt_port must be between 1 and 65535")
+        if not isinstance(self.mqtt_topic, str) or not 1 <= len(self.mqtt_topic) <= 200 or any(c.isspace() for c in self.mqtt_topic):
+            raise ValueError("mqtt_topic must be 1–200 characters without spaces")
+        if self.radio_type not in RADIO_TYPES:
+            raise ValueError(f"radio_type must be one of: {', '.join(RADIO_TYPES)}")
         if self.kiosk_text_size not in TEXT_SIZES:
             raise ValueError(f"kiosk_text_size must be one of: {', '.join(TEXT_SIZES)}")
 

@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- **MQTT status:** optional and off by default. Counts messages from a broker on the shop network and never publishes.
+- **MeshCore radios:** listen-only connection over USB or network, set with `radio_type`.
 - **Accessibility:** placeholders, checklist marks and section labels are easier to read. See docs/ACCESSIBILITY.md for what is and isn't covered.
 - **Deleting data:** delete messages and conversations; deleting a customer also removes their messages and takes them out of the activity log; admins can delete activity older than 90 days.
 - **Customer questions:** `ask` holds a question for staff, and the answer is posted without the customer's name.
