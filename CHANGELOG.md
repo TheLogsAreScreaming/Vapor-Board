@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+
+## 1.0.0 RC 4
 - **MQTT status:** optional and off by default. Counts messages from a broker on the shop network and never publishes.
 - **MeshCore radios:** listen-only connection over USB or network, set with `radio_type`.
 - **Accessibility:** placeholders, checklist marks and section labels are easier to read. See docs/ACCESSIBILITY.md for what is and isn't covered.
