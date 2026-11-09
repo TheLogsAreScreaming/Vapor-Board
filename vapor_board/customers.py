@@ -161,14 +161,25 @@ class CustomerBook:
             db.execute("UPDATE customers SET status = 'revoked' WHERE id = ?", (customer.id,))
         return self.get(customer.id)
 
-    def remove(self, customer_id, actor):
-        """Delete the record entirely (for a customer who asks to be forgotten)."""
+    def remove(self, customer_id, actor, protected_names=()):
+        """Delete the record entirely (for a customer who asks to be forgotten), with their messages.
+
+        Messages are filed by name, so they stay when the name also belongs to another customer
+        or to anything in protected_names (staff accounts, the shop mailbox).
+        Returns True when the customer's name was unique and their messages were deleted.
+        """
         self._require_staff(actor)
+        customer = self.get(customer_id)
+        unique = customer is not None and customer.name.casefold() not in {str(name).casefold() for name in protected_names} \
+            and sum(c.name.casefold() == customer.name.casefold() for c in self.customers()) == 1
         with self._connect() as db:
             if db.execute("DELETE FROM customers WHERE id = ?", (customer_id,)).rowcount != 1:
                 raise CustomerError("Customer not found")
             for table in ("customer_questions", "customer_follows", "customer_seen"):
                 db.execute(f"DELETE FROM {table} WHERE customer_id = ?", (customer_id,))
+        if unique:
+            BulletinBoard(self.path).delete_mail_for(customer.name)
+        return unique
 
     # ---- questions held for staff ---------------------------------------------------------
     def add_question(self, customer, board_id, text):

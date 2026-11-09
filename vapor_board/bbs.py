@@ -215,6 +215,26 @@ class BulletinBoard:
         with self._connect() as db:
             return db.execute("SELECT COUNT(*) FROM mail WHERE recipient = ? AND read_at IS NULL", (recipient,)).fetchone()[0]
 
+    def delete_mail(self, mail_id):
+        if type(mail_id) is not int or mail_id < 1:
+            raise ValueError("invalid message id")
+        with self._connect() as db:
+            if db.execute("DELETE FROM mail WHERE id = ?", (mail_id,)).rowcount != 1:
+                raise ValueError("message not found")
+
+    def delete_conversation(self, user, other):
+        """Delete every message between two people. Returns how many went."""
+        user, other = self._text(user, "user", 80), self._text(other, "other", 80)
+        with self._connect() as db:
+            return db.execute("DELETE FROM mail WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)",
+                              (user, other, other, user)).rowcount
+
+    def delete_mail_for(self, name):
+        """Delete every message to or from this name. Returns how many went."""
+        name = self._text(name, "name", 80)
+        with self._connect() as db:
+            return db.execute("DELETE FROM mail WHERE sender = ? OR recipient = ?", (name, name)).rowcount
+
     def mark_read(self, recipient, mail_id):
         """Mark one of recipient's own messages read; marking twice is harmless."""
         recipient = self._text(recipient, "recipient", 80)

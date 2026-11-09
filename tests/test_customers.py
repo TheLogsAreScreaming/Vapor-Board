@@ -83,5 +83,36 @@ class BoardVisibilityTests(unittest.TestCase):
                 bbs.set_customer_visible(99, True)
 
 
+
+class ForgetCustomerTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.db = Path(self.directory.name) / "bbs.sqlite"
+        self.bbs = BulletinBoard(self.db)
+        self.book = CustomerBook(self.db)
+        self.staff = SimpleNamespace(username="jess", active=True)
+
+    def test_deleting_removes_their_messages_only(self):
+        sam = self.book.add("Sam", actor=self.staff)
+        self.bbs.send_mail("Sam", "Shop", "hello")
+        self.bbs.send_mail("Shop", "Sam", "hi")
+        self.bbs.send_mail("Pat", "Shop", "keep me")
+        self.assertTrue(self.book.remove(sam.id, self.staff, ["Shop"]))
+        self.assertEqual([m["body"] for m in self.bbs.inbox("Shop")], ["keep me"])
+        self.assertEqual(self.bbs.inbox("Sam"), [])
+
+    def test_shared_or_staff_names_keep_their_messages(self):
+        first = self.book.add("Sam", actor=self.staff)
+        second = self.book.add("sam", actor=self.staff)
+        staff_named = self.book.add("Jess", actor=self.staff)
+        self.bbs.send_mail("Sam", "Shop", "hello")
+        self.bbs.send_mail("Jess", "Shop", "staff note")
+        self.assertFalse(self.book.remove(first.id, self.staff, ["Shop"]))
+        self.assertFalse(self.book.remove(staff_named.id, self.staff, ["Shop", "jess"]))
+        self.assertEqual(len(self.bbs.inbox("Shop")), 2)
+        self.assertTrue(self.book.remove(second.id, self.staff, ["Shop"]))  # now the only Sam
+
+
 if __name__ == "__main__":
     unittest.main()
