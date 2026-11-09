@@ -29,6 +29,30 @@ class DesktopShellUiTests(DesktopHarness):
             with self.subTest(page=page):
                 self.run_desktop(lambda root, page=page: self.assert_page_fits(root, page), page=page, size="900x600")
 
+    def test_tab_reaches_every_enabled_control_on_each_page(self):
+        self.seed()
+
+        def scenario(root, page):
+            root.update()
+            start = self.nav(root, page)
+            reached, widget = [], start
+            for _ in range(600):
+                widget = widget.tk_focusNext()
+                if widget is None or widget is start:
+                    break
+                reached.append(widget)
+            controls = [w for w in walk(self.page(root, page))
+                        if w.winfo_class() in ("TButton", "TEntry", "Treeview", "Text") and w.winfo_viewable()
+                        and "disabled" not in (w.state() if hasattr(w, "state") and w.winfo_class() != "Text" else ())
+                        and not (w.winfo_class() == "Text" and w.cget("state") == "disabled")]
+            self.assertTrue(controls)
+            for control in controls:
+                with self.subTest(page=page, control=str(control)):
+                    self.assertIn(control, reached)
+
+        for page in PAGES:
+            self.run_desktop(lambda root, page=page: scenario(root, page), page=page)
+
     def test_every_page_fits_with_large_text(self):
         self.seed()
         self.write_shop({"text_size": "large"})

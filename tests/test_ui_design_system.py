@@ -1,4 +1,5 @@
 """Design tokens and wording helpers. Pure Python, so these run on every CI platform."""
+from pathlib import Path
 import unittest
 from datetime import datetime, timedelta, timezone
 from vapor_board import ui_theme
@@ -20,6 +21,20 @@ class ContrastTests(unittest.TestCase):
                 with self.subTest(palette=palette.name, surface=surface):
                     self.assertGreaterEqual(ui_theme.contrast(palette.text, surface), 7.0)
                     self.assertGreaterEqual(ui_theme.contrast(palette.muted, surface), 4.5)
+
+    def test_status_colours_are_readable_on_cards(self):
+        for palette in (ui_theme.LIGHT, ui_theme.DARK):
+            for colour in (palette.success, palette.warning, palette.info, ui_theme.readable(palette.danger, palette.card)):
+                with self.subTest(palette=palette.name, colour=colour):
+                    self.assertGreaterEqual(ui_theme.contrast(colour, palette.card), 4.5)
+
+    def test_only_disabled_controls_use_the_faint_colour(self):
+        source = (Path(ui_theme.__file__).read_text() + (Path(ui_theme.__file__).parent / "desktop.py").read_text()).splitlines()
+        uses = [line for line in source if ".subtle" in line]
+        self.assertTrue(uses)
+        for line in uses:
+            with self.subTest(line=line.strip()):
+                self.assertIn('"disabled"', line)
 
     def test_any_shop_accent_stays_readable(self):
         for palette in (ui_theme.LIGHT, ui_theme.DARK):
