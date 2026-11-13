@@ -48,6 +48,11 @@ class ShopConfig:
     shop_contact: str = ""
     # Ask GitHub for newer releases at launch. Off by default: the app otherwise never contacts the internet.
     check_for_updates: bool = False
+    # Read-only notices for paired customer phones over the shop's Wi-Fi (docs/PHONE_NOTICES.md). Off by default.
+    phone_notices_enabled: bool = False
+    phone_notices_port: int = 8765
+    # Address put in pairing codes; blank uses this Mac's current local address. Reserve it in the router.
+    phone_notices_address: str = ""
 
     def __post_init__(self):
         if not isinstance(self.shop_name, str) or not (1 <= len(self.shop_name.strip()) <= 80):
@@ -56,7 +61,7 @@ class ShopConfig:
             raise ValueError("operator_name must contain 1–80 characters")
         if not isinstance(self.accent_color, str) or not _HEX.fullmatch(self.accent_color):
             raise ValueError("accent_color must be a six-digit hex color")
-        for key in ("notices_enabled", "transmissions_enabled", "mqtt_enabled", "customer_access_requires_approval", "kiosk_fullscreen", "message_alerts", "check_for_updates"):
+        for key in ("notices_enabled", "transmissions_enabled", "mqtt_enabled", "customer_access_requires_approval", "kiosk_fullscreen", "message_alerts", "check_for_updates", "phone_notices_enabled"):
             if type(getattr(self, key)) is not bool:
                 raise ValueError(f"{key} must be a boolean")
         if type(self.minimum_customer_age) is not int or self.minimum_customer_age < 21:
@@ -83,6 +88,11 @@ class ShopConfig:
             raise ValueError("mqtt_port must be between 1 and 65535")
         if not isinstance(self.mqtt_topic, str) or not 1 <= len(self.mqtt_topic) <= 200 or any(c.isspace() for c in self.mqtt_topic):
             raise ValueError("mqtt_topic must be 1–200 characters without spaces")
+        if type(self.phone_notices_port) is not int or not 1024 <= self.phone_notices_port <= 65535:
+            raise ValueError("phone_notices_port must be between 1024 and 65535")
+        if not isinstance(self.phone_notices_address, str) or len(self.phone_notices_address) > 200 \
+                or any(c.isspace() or c in "/?#&@" for c in self.phone_notices_address):
+            raise ValueError("phone_notices_address must be a host name or address")
         if self.radio_type not in RADIO_TYPES:
             raise ValueError(f"radio_type must be one of: {', '.join(RADIO_TYPES)}")
         if self.kiosk_text_size not in TEXT_SIZES:

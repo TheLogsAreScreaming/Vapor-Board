@@ -12,3 +12,9 @@ These tests assert existing guardrails: customer access requires both approval a
 
 ## Update check
 Off by default. With `check_for_updates` true, or when someone chooses File ▸ Check for Updates, Vapor Board asks GitHub for the public release list. No shop data is sent, and nothing is downloaded or installed.
+
+## Update (phone notices)
+
+- `vapor_board/phone_notices.py` is the only network listener. It is off unless `phone_notices_enabled` is true, serves one GET route built from `customer_boards()` and `customer_posts()` only, and never exposes `AuthorizedBBS`, mail, customers, questions or post authors.
+- Each phone has its own random key, issued only for an approved customer. Requests and answers are signed (HMAC-SHA256), with clock, nonce and rate checks. Approval is re-checked on every request.
+- Notices are not encrypted on the Wi-Fi; keep anything sensitive off customer-visible boards.

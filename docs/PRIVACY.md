@@ -29,6 +29,7 @@ Backups are separate copies. Deleting a customer doesn't change backups already 
 - **Radio:** Radio traffic can be received by others on the mesh. Direct messages may be readable by anyone who has the relevant channel key, depending on the radio's settings, so customers shouldn't send sensitive details. Replies are off by default.
 - **Update check:** off by default. When used, it asks GitHub for the list of releases and sends no shop data. GitHub sees the Mac's IP address.
 - **MQTT status:** off by default. When used, it connects to a broker on the shop's network, sends no shop data and doesn't keep what it receives.
+- **Phone notices:** off by default. When used, paired customer phones on the shop's Wi-Fi can fetch the Visible boards and current posts. Nothing else is served and nothing is sent outside the shop network. Notices travel unencrypted on the Wi-Fi.
 - **Staff alerts:** shown by macOS on the same Mac.
 - **Backups and exports:** go wherever staff save them. They're not encrypted, so store them as carefully as the Mac itself. CSV exports can contain customer details.
 

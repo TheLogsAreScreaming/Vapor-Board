@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- **Phone notices:** optional and off by default. Approved customers can read the Visible boards on an Android phone over the shop Wi-Fi, after staff pair the phone with a QR code (Customers ▸ Phones…). Read-only, signed both ways. See docs/PHONE_NOTICES.md.
 
 ## 1.0.0 RC 4
 - **MQTT status:** optional and off by default. Counts messages from a broker on the shop network and never publishes.
