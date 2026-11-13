@@ -8,7 +8,7 @@ Exactly what the kiosk shows: boards marked **Visible**, and posts inside their 
 Nothing else: no staff-only boards, no post authors, no messages, no customer list, no questions. A phone can't post, ask or send anything.
 
 ## Turning it on
-1. In `~/.vapor-board/shop.json` set `"phone_notices_enabled": true` and restart Vapor Board. Settings ▸ Radio shows *Phone notices: On*.
+1. In `~/.vapor-board/shop.json` set `"phone_notices_enabled": true` and restart Vapor Board. Settings ▸ Customer access shows *Phone notices: On*.
 2. macOS may ask whether Vapor Board may accept incoming network connections. Choose **Allow**.
 3. Reserve this Mac's address in the shop router so it doesn't change, or set `phone_notices_address` to a fixed name or address. Pairing codes contain this address.
 4. Optional: `phone_notices_port` (default 8765).

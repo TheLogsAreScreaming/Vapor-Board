@@ -1499,9 +1499,6 @@ def main(argv=None):
          "Replies only to direct messages from approved customers, with rate limits. Never broadcasts." if transmit
          else "Vapor Board only listens. Set transmissions_enabled in shop.json to reply to approved customers."),
         ("Radio type", "MeshCore (listen-only)" if meshcore else "Meshtastic", "Set radio_type in shop.json."),
-        ("Phone notices", ("success", "On") if phones_on else ("neutral", "Off"),
-         f"Paired customer phones read the Visible boards over this shop's Wi-Fi (port {config.phone_notices_port}). Read-only." if phones_on
-         else "No phone access. Set phone_notices_enabled in shop.json to let paired customer phones read the Visible boards."),
         ("MQTT status", ("success", "On") if config.mqtt_enabled and config.mqtt_host else ("neutral", "Off"),
          "Counts messages from a broker on your network, shown in the status bar. It never publishes." if config.mqtt_enabled and config.mqtt_host
          else "No MQTT connection. Set mqtt_enabled and mqtt_host in shop.json to count messages from a local broker."),
@@ -1509,6 +1506,7 @@ def main(argv=None):
     settings_card(settings_panes["customers"], "Customer access", (
         ("Approval before joining", ("success", "Required") if config.customer_access_requires_approval else ("warning", "Not required"), None),
         ("Minimum age", f"{config.minimum_customer_age}+", None),
+        ("Phone notices", ("success", f"On, port {config.phone_notices_port}") if phones_on else ("neutral", "Off"), None),
         ("Staff auto-lock", f"After {plural(config.auto_lock_minutes, 'minute')}" if config.auto_lock_minutes else "Off", None),
         ("New-message alerts", ("success", "On") if config.message_alerts else ("neutral", "Off"), None),
     ))
