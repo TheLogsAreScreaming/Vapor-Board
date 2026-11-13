@@ -31,7 +31,20 @@ class DesktopPhonesUiTests(DesktopHarness):
         FakeServer.started = []
 
     def dialog(self, root):
-        return next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
+        dialog = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
+        return dialog
+
+    def run_closing_dialogs(self, scenario):
+        def wrapped(root):
+            try:
+                scenario(root)
+            finally:
+                for child in root.winfo_children():
+                    if isinstance(child, tk.Toplevel):
+                        child.destroy()
+                root.update()
+        with mock.patch.object(phone_notices, "NoticesServer", FakeServer):
+            self.run_desktop(wrapped, page="Customers")
 
     def dialog_buttons(self, dialog):
         return {w.cget("text"): w for w in walk(dialog) if w.winfo_class() == "TButton"}
@@ -53,6 +66,7 @@ class DesktopPhonesUiTests(DesktopHarness):
             buttons = self.dialog_buttons(dialog)
             buttons["Pair a new phone"].invoke()
             root.update()
+            self.assertIsNone(self.toast(root))
             canvases = [w for w in walk(dialog) if isinstance(w, tk.Canvas)]
             self.assertEqual(len(canvases), 1)
             self.assertGreater(len(canvases[0].find_all()), 100)
@@ -65,8 +79,7 @@ class DesktopPhonesUiTests(DesktopHarness):
             self.assertEqual(phone_notices.PhoneBook(self.database).phones(self.sam.id), [])
             buttons["Close"].invoke()
 
-        with mock.patch.object(phone_notices, "NoticesServer", FakeServer):
-            self.run_desktop(scenario, page="Customers")
+        self.run_closing_dialogs(scenario)
         self.assertEqual(FakeServer.started, [8765])
         actions = [e["action"] for e in self.staff.activity()]
         self.assertEqual(actions[:2], ["phone removed", "phone paired"])
@@ -80,8 +93,7 @@ class DesktopPhonesUiTests(DesktopHarness):
             self.assertFalse(self.enabled(self.dialog_buttons(dialog)["Pair a new phone"]))
             self.assertTrue(any("Phone notices are off" in text for text in self.labels(dialog)))
 
-        with mock.patch.object(phone_notices, "NoticesServer", FakeServer):
-            self.run_desktop(scenario, page="Customers")
+        self.run_closing_dialogs(scenario)
         self.assertEqual(FakeServer.started, [])
 
 
