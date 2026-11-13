@@ -358,7 +358,8 @@ class ListView:
         """Ignore the selection events our own changes queue (they arrive before the next idle),
         but only while the selection is still the one we set, so an operator's pick always counts."""
         if self._quiet is None:
-            self._quiet = self.tree.winfo_toplevel().after_idle(self._unhush)
+            # Scheduled on the main window, so a list inside a dialog doesn't leave the dialog owning the callback.
+            self._quiet = self.tree._root().after_idle(self._unhush)
 
     def _unhush(self):
         self._quiet = None

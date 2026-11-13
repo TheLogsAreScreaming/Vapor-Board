@@ -177,6 +177,8 @@ class CustomerBook:
                 raise CustomerError("Customer not found")
             for table in ("customer_questions", "customer_follows", "customer_seen"):
                 db.execute(f"DELETE FROM {table} WHERE customer_id = ?", (customer_id,))
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'phone_devices'").fetchone():
+                db.execute("DELETE FROM phone_devices WHERE customer_id = ?", (customer_id,))  # paired phones
         if unique:
             BulletinBoard(self.path).delete_mail_for(customer.name)
         return unique

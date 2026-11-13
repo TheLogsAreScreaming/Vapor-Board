@@ -35,6 +35,8 @@ from .mqtt_status import MqttMonitor
 from . import VERSION_LABEL
 from . import accounts as staff_accounts
 from .customers import CustomerBook, CustomerError
+from . import phone_notices
+from . import qr
 
 # Sidebar order, grouped so everyday work sits above shop administration.
 NAVIGATION = (
@@ -73,6 +75,8 @@ def main(argv=None):
     database = home / "bbs.sqlite"
     meshcore = config.radio_type == "meshcore"  # listen-only: never replies
     transmit = config.transmissions_enabled and not demo and not meshcore  # replies to approved customers' direct messages
+    phones_on = config.phone_notices_enabled and not demo  # read-only notices for paired phones on the shop Wi-Fi
+    notices_server, notices_port = [None], [config.phone_notices_port]
     mailbox = config.operator_name.strip()
     # Staff accounts sit in their own database: restoring a backup changes them only if an admin chooses that.
     staff = staff_accounts.StaffDirectory(database.parent / "staff.sqlite")
@@ -836,6 +840,8 @@ def main(argv=None):
               justify="left").pack(anchor="w", pady=(t.px(SM), 0))
     cust_actions = ttk.Frame(cust_card.body, style="Card.TFrame")
     cust_actions.pack(fill="x", pady=(t.px(SM), 0))
+    cust_phone_row = ttk.Frame(cust_card.body, style="Card.TFrame")
+    cust_phone_row.pack(fill="x", pady=(t.px(XS), 0))
     shown_customers, shown_visibility, shown_questions = [], [], []
 
     def selected_customer():
@@ -855,7 +861,7 @@ def main(argv=None):
         for button in (answer_button, decline_button):
             button.pack_forget()
         if cust_view[0] == "questions":
-            for button in (approve_button, revoke_button, remove_button, visibility_button):
+            for button in (approve_button, revoke_button, remove_button, visibility_button, phones_button):
                 button.pack_forget()
             question = selected_question()
             for button in (answer_button, decline_button):
@@ -870,6 +876,8 @@ def main(argv=None):
             approve_button.state(["!disabled"] if customer is not None and not customer.approved else ["disabled"])
             revoke_button.state(["!disabled"] if customer is not None and customer.status != "revoked" else ["disabled"])
             remove_button.state(["!disabled"] if customer is not None else ["disabled"])
+            phones_button.pack(side="left")
+            phones_button.state(["!disabled"] if customer is not None and customer.approved else ["disabled"])
             if customer is None:
                 cust_detail.set("Select a customer to approve them or remove their access.")
             else:
@@ -881,7 +889,7 @@ def main(argv=None):
                     parts.append(customer.contact)
                 cust_detail.set("  ·  ".join(parts))
         else:
-            for button in (approve_button, revoke_button, remove_button):
+            for button in (approve_button, revoke_button, remove_button, phones_button):
                 button.pack_forget()
             visibility_button.pack(side="left")
             entry = selected_visibility()
@@ -982,6 +990,102 @@ def main(argv=None):
         refresh_customers()
         notify("success", "Customer deleted", "" if unique else f"Messages filed under {customer.name} were kept, because someone else has that name.")
 
+    phone_book = phone_notices.PhoneBook(database)
+
+    def manage_phones():
+        """Pair an approved customer's phone for read-only notices, or remove one."""
+        customer = selected_customer()
+        if customer is None:
+            return
+        dialog = tk.Toplevel(root)
+        dialog.title(f"Phones for {customer.name}")
+        dialog.transient(root)
+        dialog.configure(bg=p.card)
+        dialog.geometry(f"+{root.winfo_rootx() + t.px(80)}+{root.winfo_rooty() + t.px(60)}")
+        try:
+            dialog.attributes("-alpha", root.attributes("-alpha"))  # tests keep the window invisible
+        except tk.TclError:
+            pass
+        body = ttk.Frame(dialog, style="Card.TFrame", padding=t.px(LG))
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=f"Phones for {customer.name}", style="Card.Headline.TLabel").pack(anchor="w")
+        intro = ("Paired phones can read the boards marked Visible over this shop's Wi-Fi, with the Vapor Board Notices app. "
+                 "Nothing can be posted or sent from a phone." if phones_on else
+                 "Phone notices are off. Set phone_notices_enabled in shop.json and restart Vapor Board to pair phones.")
+        ttk.Label(body, text=intro, style="Card.Caption.TLabel", wraplength=t.px(360), justify="left").pack(anchor="w", pady=(t.px(XS), t.px(SM)))
+        phone_list = theme.ListView(body, t, height=3, placeholder="No phones paired")
+        phone_list.frame.pack(fill="x")
+        shown_phones = []
+        code_area = ttk.Frame(body, style="Card.TFrame")
+        code_area.pack(fill="x")
+        buttons = ttk.Frame(body, style="Card.TFrame")
+        buttons.pack(fill="x", pady=(t.px(SM), 0))
+
+        def refresh_phones():
+            nonlocal shown_phones
+            try:
+                shown_phones = phone_book.phones(customer.id)
+            except DATA_ERRORS as exc:
+                phone_list.set_rows([], placeholder=f"Couldn't read phones: {exc}", tag="error")
+                return
+            phone_list.set_rows([(f"Paired by {ph['paired_by']} {friendly_time(ph['paired_at'])}  ·  "
+                                  + (f"last refreshed {friendly_time(ph['last_seen_at'])}" if ph["last_seen_at"] else "not used yet"), ())
+                                 for ph in shown_phones], placeholder="No phones paired")
+
+        def pair_phone():
+            address = config.phone_notices_address or phone_notices.local_address()
+            if not address:
+                notify("danger", "Phone not paired", "This Mac isn't on a network. Connect it to the shop's Wi-Fi first.")
+                return
+            try:
+                device_id, key = phone_book.pair(customer.id, session[0])
+            except (phone_notices.PhoneError, *DATA_ERRORS) as exc:
+                notify("danger", "Phone not paired", str(exc))
+                return
+            record("phone paired", customer.name)
+            link = phone_notices.pairing_link(address, notices_port[0], device_id, key, config.shop_name)
+            for child in code_area.winfo_children():
+                child.destroy()
+            matrix = qr.encode(link)
+            cell, quiet = max(3, t.px(4)), 4
+            side = (len(matrix) + 2 * quiet) * cell
+            canvas = tk.Canvas(code_area, width=side, height=side, bg="#ffffff", highlightthickness=0)
+            for y, row in enumerate(matrix):
+                for x, dark in enumerate(row):
+                    if dark:
+                        canvas.create_rectangle((x + quiet) * cell, (y + quiet) * cell, (x + quiet + 1) * cell - 1,
+                                                (y + quiet + 1) * cell - 1, fill="#000000", outline="")
+            canvas.pack(pady=(t.px(MD), 0))
+            ttk.Label(code_area, text=f"Scan this in the Vapor Board Notices app on {customer.name}'s phone while it is on the "
+                                      f"shop's Wi-Fi ({address}). The code is shown only now; close this window once the phone says "
+                                      "it is paired.", style="Card.Caption.TLabel", wraplength=t.px(360), justify="left").pack(anchor="w", pady=(t.px(SM), 0))
+            refresh_phones()
+
+        def remove_phone():
+            index = phone_list.selected()
+            if index is None or index >= len(shown_phones):
+                return
+            try:
+                phone_book.remove(shown_phones[index]["id"], session[0])
+            except (phone_notices.PhoneError, *DATA_ERRORS) as exc:
+                notify("danger", "Phone not removed", str(exc))
+                return
+            record("phone removed", customer.name)
+            for child in code_area.winfo_children():
+                child.destroy()
+            refresh_phones()
+            notify("success", "Phone removed", "It can no longer read the notices.")
+
+        pair_button = ttk.Button(buttons, text="Pair a new phone", style="Accent.TButton", command=pair_phone)
+        pair_button.pack(side="left")
+        if not phones_on or notices_server[0] is None:
+            pair_button.state(["disabled"])
+        ttk.Button(buttons, text="Remove phone", command=remove_phone).pack(side="left", padx=(t.px(SM), 0))
+        ttk.Button(buttons, text="Close", command=dialog.destroy).pack(side="right")
+        dialog.bind("<Escape>", lambda _e: dialog.destroy())
+        refresh_phones()
+        return dialog
+
     def toggle_visibility():
         entry = selected_visibility()
         if entry is None:
@@ -1032,6 +1136,7 @@ def main(argv=None):
     revoke_button = ttk.Button(cust_actions, text="Remove access", command=revoke_customer)
     remove_button = ttk.Button(cust_actions, text="Delete", style="Danger.TButton", command=remove_customer)
     visibility_button = ttk.Button(cust_actions, text="Hide from customers", command=toggle_visibility)
+    phones_button = ttk.Button(cust_phone_row, text="Phones…", command=manage_phones)
 
     new_cust_card = theme.Card(cust_body, t, "Add a customer", "Approve them once you've checked their ID.").grid(row=0, column=1, sticky="new")
     new_cust_card.subtitle.configure(wraplength=t.px(230))
@@ -1401,6 +1506,7 @@ def main(argv=None):
     settings_card(settings_panes["customers"], "Customer access", (
         ("Approval before joining", ("success", "Required") if config.customer_access_requires_approval else ("warning", "Not required"), None),
         ("Minimum age", f"{config.minimum_customer_age}+", None),
+        ("Phone notices", ("success", f"On, port {config.phone_notices_port}") if phones_on else ("neutral", "Off"), None),
         ("Staff auto-lock", f"After {plural(config.auto_lock_minutes, 'minute')}" if config.auto_lock_minutes else "Off", None),
         ("New-message alerts", ("success", "On") if config.message_alerts else ("neutral", "Off"), None),
     ))
@@ -1681,6 +1787,8 @@ def main(argv=None):
     def on_close():
         if mqtt_monitor is not None:
             mqtt_monitor.stop()
+        if notices_server[0] is not None:
+            notices_server[0].stop()
         worker.stop()
         root.destroy()
 
@@ -2272,6 +2380,12 @@ def main(argv=None):
     if mqtt_monitor is not None:
         mqtt_monitor.start()
         poll_mqtt()
+    if phones_on:
+        try:
+            feed = phone_notices.NoticesFeed(database, config.shop_name)
+            notices_server[0] = phone_notices.NoticesServer(feed, port=config.phone_notices_port).start()
+        except OSError as exc:
+            notify("warning", "Phone notices didn't start", f"Port {config.phone_notices_port} couldn't be opened: {exc}")
     if config.check_for_updates and not demo:
         check_updates()
     root.mainloop()
